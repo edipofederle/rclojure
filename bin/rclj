@@ -1,9 +1,14 @@
 #!/usr/bin/env ruby
 require_relative "../lib/rclojure"
+require_relative "../lib/rclojure/repl"
 
 if ARGV.empty?
-  require_relative "../lib/rclojure/repl"
   RClojure::REPL.new.run
 else
-  RClojure::Runtime.new.load_file(ARGV.first)
+  begin
+    RClojure::Runtime.new.load_file(ARGV.first)
+  rescue StandardError, SystemStackError => e
+    warn RClojure::REPL.describe_error(e)
+    exit 1
+  end
 end

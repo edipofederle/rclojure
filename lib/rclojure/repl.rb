@@ -18,7 +18,7 @@ module RClojure
         rescue EOFError
           next # incomplete form: keep reading lines
         rescue ReaderError => e
-          warn "Syntax error reading source: #{e.message}"
+          warn REPL.describe_error(e)
           forms = []
         end
         buffer = +""
@@ -37,13 +37,20 @@ module RClojure
     def eval_and_print(form)
       puts Printer.pr_str(@runtime.eval(form))
       true
-    rescue CompilerError => e
-      warn "Syntax error compiling: #{e.message}"
-      false
     rescue StandardError, SystemStackError => e
-      warn "Execution error (#{e.class.name.split('::').last}): #{e.message}"
-      warn "  data: #{Printer.pr_str(e.data)}" if e.is_a?(ExceptionInfo)
+      warn REPL.describe_error(e)
       false
+    end
+
+    def self.describe_error(error)
+      case error
+      when ReaderError then "Syntax error reading source: #{error.message}"
+      when CompilerError then "Syntax error compiling: #{error.message}"
+      else
+        message = "Execution error (#{error.class.name.split('::').last}): #{error.message}"
+        message += "\n  data: #{Printer.pr_str(error.data)}" if error.is_a?(ExceptionInfo)
+        message
+      end
     end
   end
 end

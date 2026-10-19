@@ -6,7 +6,7 @@ module RClojure
     def initialize
       @namespaces = {}
       core = create_namespace("clojure.core")
-      Core.install(core)
+      Core.install(core, self)
       @current_ns = create_namespace("user")
       @current_ns.refer(core)
       @analyzer = Analyzer.new(self)

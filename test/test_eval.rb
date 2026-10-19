@@ -2,18 +2,7 @@ require "test_helper"
 
 class TestEval < Minitest::Test
   include RClojure
-
-  def setup
-    @runtime = Runtime.new
-  end
-
-  def ev(source)
-    @runtime.eval_string(source)
-  end
-
-  def assert_ev(expected, source)
-    expected.nil? ? assert_nil(ev(source)) : assert_equal(expected, ev(source))
-  end
+  include EvalTestHelpers
 
   def assert_compile_error(message, source)
     error = assert_raises(CompilerError) { ev(source) }

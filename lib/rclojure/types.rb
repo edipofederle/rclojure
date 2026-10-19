@@ -56,7 +56,9 @@ module RClojure
     end
 
     def ==(other)
-      other.is_a?(Sequential) && other.to_a == to_a
+      return false unless other.is_a?(Sequential) && other.size == size
+
+      other.to_a.each_with_index.all? { |item, i| RClojure.equiv?(@items[i], item) }
     end
     alias eql? ==
 
@@ -92,6 +94,17 @@ module RClojure
     def cons(item)
       List.new([item, *@items])
     end
+    alias conj cons
+
+    def peek
+      @items.first
+    end
+
+    def pop
+      raise Error, "Can't pop empty list" if empty?
+
+      rest
+    end
 
     def inspect
       "#<RClojure::List #{@items.inspect}>"
@@ -117,6 +130,27 @@ module RClojure
 
     def conj(item)
       Vector.new([*@items, item])
+    end
+
+    # Replaces the item at index, or appends when index == size.
+    def assoc(index, value)
+      unless index.is_a?(Integer) && index.between?(0, size)
+        raise IndexError, "Index #{index} out of bounds for vector of size #{size}"
+      end
+
+      items = @items.dup
+      items[index] = value
+      Vector.new(items)
+    end
+
+    def peek
+      @items.last
+    end
+
+    def pop
+      raise Error, "Can't pop empty vector" if empty?
+
+      Vector.new(@items[0...-1])
     end
 
     # Vectors are functions of their indices: ([:a :b] 1) => :b
@@ -166,8 +200,28 @@ module RClojure
       Map.new(@hash.merge(key => value))
     end
 
+    def dissoc(key)
+      return self unless @hash.key?(key)
+
+      hash = @hash.dup
+      hash.delete(key)
+      Map.new(hash)
+    end
+
+    def keys
+      @hash.keys
+    end
+
+    def values
+      @hash.values
+    end
+
     def size
       @hash.size
+    end
+
+    def empty?
+      @hash.empty?
     end
 
     def to_h
@@ -175,7 +229,8 @@ module RClojure
     end
 
     def ==(other)
-      other.is_a?(Map) && other.to_h == to_h
+      other.is_a?(Map) && other.size == size &&
+        @hash.all? { |key, value| other.key?(key) && RClojure.equiv?(value, other[key]) }
     end
     alias eql? ==
 
@@ -213,8 +268,20 @@ module RClojure
       include?(item) ? item : nil
     end
 
+    def conj(item)
+      include?(item) ? self : Set.new([*@items.keys, item])
+    end
+
+    def disj(item)
+      include?(item) ? Set.new(@items.keys - [item]) : self
+    end
+
     def size
       @items.size
+    end
+
+    def empty?
+      @items.empty?
     end
 
     def ==(other)

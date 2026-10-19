@@ -10,3 +10,17 @@ module RClojureTestHelpers
     RClojure::Symbol.parse(text)
   end
 end
+
+module EvalTestHelpers
+  def setup
+    @runtime = RClojure::Runtime.new
+  end
+
+  def ev(source)
+    @runtime.eval_string(source)
+  end
+
+  def assert_ev(expected, source)
+    expected.nil? ? assert_nil(ev(source)) : assert_equal(expected, ev(source))
+  end
+end
