@@ -8,6 +8,7 @@ require_relative "rclojure/nodes"
 require_relative "rclojure/fn"
 require_relative "rclojure/atom"
 require_relative "rclojure/analyzer"
+require_relative "rclojure/syntax_quote"
 require_relative "rclojure/core"
 require_relative "rclojure/runtime"
 

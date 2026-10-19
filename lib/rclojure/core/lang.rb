@@ -36,6 +36,11 @@ module RClojure
         define.("read-string", ->(source) { Reader.read_string(source) })
         define.("eval", ->(form) { runtime.eval(form) })
 
+        define.("set-macro!", ->(var) { var.macro! })
+        define.("macroexpand-1", ->(form) { runtime.analyzer.macroexpand_1(form) })
+        define.("macroexpand", ->(form) { runtime.analyzer.macroexpand(form) })
+        define.("gensym", ->(prefix = "G__") { Symbol.new(nil, "#{Printer.str(prefix)}#{runtime.next_id}") })
+
         define.("ex-info", ->(message, data, cause = nil) { ExceptionInfo.new(message, data, cause) })
         define.("ex-data", ->(ex) { ex.respond_to?(:data) ? ex.data : nil })
         define.("ex-message", ->(ex) { ex.is_a?(Exception) ? ex.message : nil })

@@ -25,6 +25,7 @@ module RClojure
           items.size > 1 ? List.new(items.drop(1)) : nil
         })
         define.("cons", ->(item, coll) { List.new([item, *RClojure.items(coll)]) })
+        define.("concat", ->(*colls) { List.new(colls.flat_map { |coll| RClojure.items(coll) }) })
         define.("conj", lambda { |*args|
           return Vector[] if args.empty?
 

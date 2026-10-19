@@ -2,6 +2,7 @@ module RClojure
   # Turns forms into Nodes, resolving symbols and validating special forms.
   class Analyzer
     SPECIAL_FORMS = %w[def if do let* loop* recur fn* quote var throw try].freeze
+    SYNTAX_QUOTE = Symbol.new(nil, "syntax-quote")
     AMPERSAND = Symbol.new(nil, "&")
     CATCH = Symbol.new(nil, "catch")
     FINALLY = Symbol.new(nil, "finally")
@@ -38,6 +39,27 @@ module RClojure
       end
     end
 
+    # Expands form once if it is a macro call (or a syntax-quote);
+    # otherwise returns it unchanged.
+    def macroexpand_1(form, scope = Scope::EMPTY)
+      return form unless form.is_a?(List) && !form.empty?
+
+      head = form.first
+      return SyntaxQuote.new(@runtime).expand(form.to_a[1]) if head == SYNTAX_QUOTE
+
+      macro = macro_var(head, scope)
+      macro ? expand_macro(macro, form, scope) : form
+    end
+
+    def macroexpand(form, scope = Scope::EMPTY)
+      loop do
+        expanded = macroexpand_1(form, scope)
+        return expanded if expanded.equal?(form)
+
+        form = expanded
+      end
+    end
+
     private
 
     def analyze_all(forms, scope)
@@ -49,16 +71,43 @@ module RClojure
         return Nodes::Local.new(binding)
       end
 
-      Nodes::VarRef.new(resolve_var(symbol))
+      var = resolve_var(symbol)
+      raise CompilerError, "Can't take value of a macro: #{var}" if var.macro?
+
+      Nodes::VarRef.new(var)
     end
 
     def resolve_var(symbol)
-      var = if symbol.ns
-              @runtime.find_namespace(symbol.ns)&.own_var(symbol.name)
-            else
-              @runtime.current_ns.find_var(symbol.name)
-            end
-      var or raise CompilerError, "Unable to resolve symbol: #{symbol} in this context"
+      lookup_var(symbol) or raise CompilerError, "Unable to resolve symbol: #{symbol} in this context"
+    end
+
+    def lookup_var(symbol)
+      if symbol.ns
+        @runtime.find_namespace(symbol.ns)&.own_var(symbol.name)
+      else
+        @runtime.current_ns.find_var(symbol.name)
+      end
+    end
+
+    # The macro Var named by head, unless head is a special form or a
+    # local (locals shadow macros).
+    def macro_var(head, scope)
+      return nil unless head.is_a?(Symbol)
+      return nil if head.ns.nil? && (SPECIAL_FORMS.include?(head.name) || scope.locals.key?(head.name))
+
+      var = lookup_var(head)
+      var if var&.macro?
+    end
+
+    # Macros are fns taking the whole form and the local environment
+    # (&form, &env) before their declared arguments.
+    def expand_macro(var, form, scope)
+      env = Map.new(scope.locals.to_h { |name, binding| [Symbol.new(nil, name), binding] })
+      RClojure.invoke(var.deref, [form, env, *form.to_a.drop(1)])
+    rescue CompilerError
+      raise
+    rescue StandardError => e
+      raise CompilerError, "Error macroexpanding #{form.first}: #{e.message}"
     end
 
     def analyze_seq(form, scope, tail)
@@ -66,6 +115,8 @@ module RClojure
       args = form.to_a.drop(1)
       if head.is_a?(Symbol) && head.ns.nil? && SPECIAL_FORMS.include?(head.name)
         send(:"analyze_#{head.name.delete('*')}", args, scope, tail)
+      elsif head == SYNTAX_QUOTE || macro_var(head, scope)
+        analyze(macroexpand_1(form, scope), scope, tail: tail)
       else
         Nodes::Invoke.new(analyze(head, scope), analyze_all(args, scope))
       end
@@ -90,7 +141,10 @@ module RClojure
       # Interned before analyzing init, so the init can refer to the var
       # itself (e.g. a recursive function).
       var = @runtime.current_ns.intern(name.name)
-      Nodes::Def.new(var, args.size == 1 ? nil : analyze(init, scope))
+      init_node = args.size == 1 ? nil : analyze(init, scope)
+      # Unnamed fns take the var's name, for error messages and printing.
+      init_node.name = var.to_s.delete_prefix("#'") if init_node.is_a?(Nodes::FnNode) && init_node.name.nil?
+      Nodes::Def.new(var, init_node)
     end
 
     def analyze_if(args, scope, tail)

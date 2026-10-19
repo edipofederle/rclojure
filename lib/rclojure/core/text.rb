@@ -19,7 +19,7 @@ module RClojure
         define.("name", ->(x) { name_parts(x).last })
         define.("namespace", ->(x) { name_parts(x).first })
         define.("keyword", lambda { |ns_or_name, name = nil|
-          return :"#{ns_or_name}/#{name}" if name
+          return (ns_or_name ? "#{ns_or_name}/#{name}" : name).to_sym if name
           return ns_or_name if ns_or_name.is_a?(::Symbol)
 
           ns_or_name.to_s.to_sym

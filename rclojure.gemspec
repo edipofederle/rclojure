@@ -8,7 +8,7 @@ Gem::Specification.new do |spec|
   spec.license       = "MIT"
   spec.required_ruby_version = ">= 3.3"
 
-  spec.files         = Dir["lib/**/*.rb", "bin/*", "README.md"]
+  spec.files         = Dir["lib/**/*.rb", "lib/**/*.clj", "bin/*", "README.md"]
   spec.bindir        = "bin"
   spec.executables   = ["rclj"]
   spec.require_paths = ["lib"]

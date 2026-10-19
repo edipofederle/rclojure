@@ -19,6 +19,15 @@ module RClojure
       @bound
     end
 
+    def macro?
+      @macro
+    end
+
+    def macro!
+      @macro = true
+      self
+    end
+
     def deref
       raise Error, "Attempting to use unbound var: #{self}" unless @bound
 

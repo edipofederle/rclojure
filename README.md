@@ -8,7 +8,7 @@ A Clojure dialect hosted on Ruby.
 - [x] Milestone 1 — reader (numbers, strings, symbols, keywords, lists, vectors, maps, sets, quote/syntax-quote/unquote/deref, comments, `#_`)
 - [x] Milestone 2 — analyzer + evaluator with special forms (`def`, `if`, `do`, `let*`, `fn*`, `quote`, `var`, `loop*`/`recur`, `try`/`catch`/`finally`, `throw`)
 - [x] Milestone 3 — core primitives in Ruby (collections, numbers, strings/printing, atoms, `apply`/`reduce`/`eval`)
-- [ ] Milestone 4 — macros + `core.clj` bootstrap
+- [x] Milestone 4 — macros, syntax-quote, destructuring, `core.clj` bootstrap (`defn`, `let`, `cond`, `->`, `doseq`, `case`, ...)
 - [ ] Milestone 5 — seqs, laziness, persistent collections
 - [ ] Milestone 6 — Ruby interop
 - [ ] Milestone 7 — namespaces
@@ -28,12 +28,15 @@ introduced, and remove it when the gap is closed.
 - No character literals (`\a`, `\newline`) — no character type yet
 - No metadata (`^{:doc ...}`, `^String`)
 - No `#()` anonymous functions, `#'x` var quote, `#"regex"`, `::auto-resolved` keywords or tagged literals (`#inst`)
-- Syntax-quote is read as a `(syntax-quote ...)` form and not yet expanded — M4
+- Syntax-quote is expanded by the analyzer rather than the reader, so ``'`(a b)`` yields the raw `(syntax-quote (a b))` form instead of its expansion
 - Floats with an `M` suffix are read as `Float`, not `BigDecimal`
 
 **Language**
-- No macros, so no `defn`, `when`, `cond`, `and`/`or`, `->`, `let`/`fn` (only `let*`/`fn*`) — M4
-- No destructuring — M4
+- Missing macros/forms: `for` (needs lazy seqs — M5), `letfn`, `defonce`, `defmulti`/`defmethod`, protocols and records
+- `defn-` is an alias for `defn` (no private vars); `defn` skips attr-maps and ignores `{:pre :post}` conditions
+- `case` is a linear chain of `=` tests (no constant-time dispatch or duplicate-constant check)
+- `doseq` supports `:let` and `:when` but not `:while`
+- Macros are flagged with a non-standard `set-macro!` builtin instead of `:macro` metadata; `&env` maps symbols to internal `LocalBinding` objects
 - `def` discards docstrings; no metadata on vars or collections
 - No dynamic vars or `binding`
 - Single `user` namespace (plus `clojure.core`); no `ns`/`require` — M7
@@ -43,7 +46,7 @@ introduced, and remove it when the gap is closed.
 
 **Data**
 - Collections copy on every update (O(n)), no structural sharing — M5
-- No lazy seqs; seq functions are eager, and `map`/`filter`/`range`/`take` don't exist yet — M5
+- No lazy seqs; seq functions (including `core.clj` ones like `reverse`, `interpose`, `concat`) are eager, and `map`/`filter`/`range`/`take` don't exist yet — M5
 - Strings are not seqable (`(first "abc")` errors) — needs a character type
 - Map entries are plain two-element vectors
 - `<`/`>` use Ruby semantics, so they also compare strings instead of erroring; `compare` doesn't support collections
@@ -51,6 +54,7 @@ introduced, and remove it when the gap is closed.
 
 **Performance**
 - Tree-walking interpreter: a 1M-iteration `loop*` takes ~7s — M8, and see the YJIT TODO
+- Every `Runtime` evaluates `core.clj` from source at startup (~50ms), which also dominates the test suite's run time
 
 ## Usage
 
@@ -81,14 +85,17 @@ bundle exec rake  # run tests
 ## Architecture
 
 ```
-source ──Reader──▶ forms ──Analyzer──▶ Nodes ──#eval(env)──▶ values
+source ──Reader──▶ forms ──Analyzer (macroexpand)──▶ Nodes ──#eval(env)──▶ values
 ```
 
-The analyzer resolves symbols to locals or Vars, validates special forms and
-rejects `recur` outside tail position. Nodes are evaluated directly for now;
-milestone 8 will compile them to Ruby instead.
+The analyzer expands macros and syntax-quote, resolves symbols to locals or
+Vars, validates special forms and rejects `recur` outside tail position.
+Nodes are evaluated directly for now; milestone 8 will compile them to Ruby
+instead.
 
 Ruby primitives live in `lib/rclojure/core/`, grouped as `numbers`,
 `collections`, `text` (strings, symbols, keywords, printing) and `lang`
-(equality, atoms, `apply`, `eval`, exceptions). Functions that are easy to
-write in rclojure itself will go in `core.clj` once macros exist.
+(equality, atoms, `apply`, `eval`, exceptions, macro support). Everything
+that can be written in rclojure itself lives in `lib/rclojure/core.clj`, which
+bootstraps `defmacro` from `fn*` and builds up `defn`, destructuring `let`/
+`loop`/`fn`, the control-flow macros and collection helpers.

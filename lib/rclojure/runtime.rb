@@ -1,19 +1,31 @@
 module RClojure
   # Owns the namespaces and evaluates forms. Each Runtime is independent.
   class Runtime
-    attr_reader :current_ns
+    CORE_SOURCE = File.expand_path("core.clj", __dir__)
+
+    attr_reader :current_ns, :analyzer
 
     def initialize
       @namespaces = {}
+      @next_id = 0
+      @analyzer = Analyzer.new(self)
+
       core = create_namespace("clojure.core")
       Core.install(core, self)
+      @current_ns = core
+      load_file(CORE_SOURCE)
+
       @current_ns = create_namespace("user")
       @current_ns.refer(core)
-      @analyzer = Analyzer.new(self)
     end
 
     def find_namespace(name)
       @namespaces[name]
+    end
+
+    # Unique ids for gensyms.
+    def next_id
+      @next_id += 1
     end
 
     def eval(form)
