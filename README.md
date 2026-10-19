@@ -14,7 +14,13 @@ A Clojure dialect hosted on Ruby.
 - [ ] Milestone 7 — namespaces
 - [ ] Milestone 8 — compile to Ruby
 
+## TODO
+
+- [ ] Rebuild the local Ruby with YJIT (`sudo apt install rustc && rvm reinstall 3.4.8`, check with `ruby --yjit -v`) and benchmark the interpreter with `RUBY_YJIT_ENABLE=1`; a 1M-iteration `loop*` currently takes ~7s without it
+
 ## Usage
+
+Requires Ruby 3.3+ (the repo pins 3.4.8 in `.ruby-version`).
 
 ```sh
 bundle install
