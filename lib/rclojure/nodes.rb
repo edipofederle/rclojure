@@ -139,6 +139,13 @@ module RClojure
       end
     end
 
+    # A Ruby method call: (. target method args*)
+    HostCall = Struct.new(:target, :method, :args) do
+      def eval(env)
+        target.eval(env).public_send(method, *args.map { |arg| arg.eval(env) })
+      end
+    end
+
     VectorNode = Struct.new(:items) do
       def eval(env)
         Vector.new(items.map { |item| item.eval(env) })

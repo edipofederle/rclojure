@@ -41,6 +41,8 @@ module RClojure
     when nil then []
     when Sequential, Set then coll.to_a
     when Map then coll.map { |key, value| Vector[key, value] }
+    when Array then coll
+    when Hash then coll.map { |key, value| Vector[key, value] }
     else raise Error, "Don't know how to create ISeq from: #{coll.class.name}"
     end
   end

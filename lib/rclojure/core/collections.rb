@@ -101,7 +101,7 @@ module RClojure
         case coll
         when nil then 0
         when ::String then coll.length
-        when Sequential, Map, Set then coll.size
+        when Sequential, Map, Set, Array, Hash then coll.size
         else raise Error, "count not supported on this type: #{coll.class.name}"
         end
       end

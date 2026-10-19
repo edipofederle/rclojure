@@ -10,7 +10,7 @@ A Clojure dialect hosted on Ruby.
 - [x] Milestone 3 — core primitives in Ruby (collections, numbers, strings/printing, atoms, `apply`/`reduce`/`eval`)
 - [x] Milestone 4 — macros, syntax-quote, destructuring, `core.clj` bootstrap (`defn`, `let`, `cond`, `->`, `doseq`, `case`, ...)
 - [ ] Milestone 5 — seqs, laziness, persistent collections
-- [ ] Milestone 6 — Ruby interop
+- [ ] Milestone 6 — Ruby interop (*partial*: method calls, class methods, constants)
 - [ ] Milestone 7 — namespaces
 - [ ] Milestone 8 — compile to Ruby
 
@@ -40,7 +40,11 @@ introduced, and remove it when the gap is closed.
 - `def` discards docstrings; no metadata on vars or collections
 - No dynamic vars or `binding`
 - Single `user` namespace (plus `clojure.core`); no `ns`/`require` — M7
-- No Ruby interop (`.method`, `Class/new`) — M6
+- Ruby interop is minimal — M6:
+  - no way to pass a block (`(.map arr f)` can't hand `f` to a Ruby block)
+  - no automatic conversion between rclojure collections and Ruby `Array`/`Hash` (Ruby arrays/hashes do work with seq functions, but print in Ruby format)
+  - no constructor shorthands `(Foo. x)`/`(new Foo x)` (use `(Foo/new x)`), no `..`, `doto` or `set!`
+  - no type hints or `instance?`
 - `catch` takes a bare Ruby exception class name (looked up at top level, then in `RClojure`) or `:default`; no `Throwable`
 - Deep non-tail recursion is limited by the Ruby stack
 
@@ -81,6 +85,18 @@ bundle exec rake  # run tests
 | `()` `[]` `{}` `#{}` | `RClojure::List` / `Vector` / `Map` / `Set` |
 | functions | `RClojure::Fn` (rclojure) / `RClojure::Builtin` (Ruby); anything with `#call` is invocable |
 | exceptions | Ruby exceptions; `ex-info` creates `RClojure::ExceptionInfo` |
+
+## Ruby interop
+
+```clojure
+(.upcase "hello")                  ; "hello".upcase
+(. "hello" (center 11 "*"))        ; the special form underneath
+(.start-with? "rclojure" "rc")     ; kebab-case => start_with?
+(Math/sqrt 16)                     ; Math.sqrt(16)
+Math/PI                            ; Math::PI
+(Time/now)  String  File::Stat     ; classes are values
+(-> "  some text " .strip .upcase) ; threads through Ruby methods
+```
 
 ## Architecture
 

@@ -71,7 +71,10 @@ module RClojure
       return auto_gensym(symbol) if symbol.name.end_with?("#")
 
       var = @runtime.current_ns.find_var(symbol.name)
-      Symbol.new(var ? var.ns.name : @runtime.current_ns.name, symbol.name)
+      return Symbol.new(var.ns.name, symbol.name) if var
+      return symbol unless Host.constant(symbol.name).equal?(Host::NOT_FOUND) # Ruby class names stay as-is
+
+      Symbol.new(@runtime.current_ns.name, symbol.name)
     end
 
     def auto_gensym(symbol)

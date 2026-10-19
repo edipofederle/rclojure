@@ -1,7 +1,8 @@
 module RClojure
   # Turns forms into Nodes, resolving symbols and validating special forms.
   class Analyzer
-    SPECIAL_FORMS = %w[def if do let* loop* recur fn* quote var throw try].freeze
+    SPECIAL_FORMS = %w[def if do let* loop* recur fn* quote var throw try .].freeze
+    DOT = Symbol.new(nil, ".")
     SYNTAX_QUOTE = Symbol.new(nil, "syntax-quote")
     AMPERSAND = Symbol.new(nil, "&")
     CATCH = Symbol.new(nil, "catch")
@@ -39,13 +40,16 @@ module RClojure
       end
     end
 
-    # Expands form once if it is a macro call (or a syntax-quote);
-    # otherwise returns it unchanged.
+    # Expands form once if it is a macro call, a syntax-quote or interop
+    # shorthand; otherwise returns it unchanged.
     def macroexpand_1(form, scope = Scope::EMPTY)
       return form unless form.is_a?(List) && !form.empty?
 
       head = form.first
       return SyntaxQuote.new(@runtime).expand(form.to_a[1]) if head == SYNTAX_QUOTE
+
+      host_form = expand_host_shorthand(form, scope)
+      return host_form if host_form
 
       macro = macro_var(head, scope)
       macro ? expand_macro(macro, form, scope) : form
@@ -71,10 +75,41 @@ module RClojure
         return Nodes::Local.new(binding)
       end
 
-      var = resolve_var(symbol)
-      raise CompilerError, "Can't take value of a macro: #{var}" if var.macro?
+      var = lookup_var(symbol)
+      if var
+        raise CompilerError, "Can't take value of a macro: #{var}" if var.macro?
 
-      Nodes::VarRef.new(var)
+        return Nodes::VarRef.new(var)
+      end
+
+      constant = host_constant(symbol)
+      raise CompilerError, "Unable to resolve symbol: #{symbol} in this context" if constant.equal?(Host::NOT_FOUND)
+
+      Nodes::Const.new(constant)
+    end
+
+    # `String`, `File::Stat` => the Ruby constant; `Math/PI` => Math::PI.
+    def host_constant(symbol)
+      return Host.constant(symbol.name) unless symbol.ns
+      return Host::NOT_FOUND if @runtime.find_namespace(symbol.ns) || !Host.module?(symbol.ns)
+
+      Host.constant("#{symbol.ns}::#{symbol.name}")
+    end
+
+    #   (.method target args*)  => (. target method args*)
+    #   (Class/method args*)    => (. Class method args*)
+    def expand_host_shorthand(form, scope)
+      head = form.first
+      return nil unless head.is_a?(Symbol)
+
+      args = form.to_a.drop(1)
+      if head.ns.nil? && head.name.start_with?(".") && head.name.size > 1 && !scope.locals.key?(head.name)
+        raise CompilerError, "Malformed member expression, expecting (#{head} target ...)" if args.empty?
+
+        List[DOT, args.first, Symbol.new(nil, head.name[1..]), *args.drop(1)]
+      elsif head.ns && @runtime.find_namespace(head.ns).nil? && Host.module?(head.ns)
+        List[DOT, Symbol.new(nil, head.ns), Symbol.new(nil, head.name), *args]
+      end
     end
 
     def resolve_var(symbol)
@@ -114,12 +149,30 @@ module RClojure
       head = form.first
       args = form.to_a.drop(1)
       if head.is_a?(Symbol) && head.ns.nil? && SPECIAL_FORMS.include?(head.name)
-        send(:"analyze_#{head.name.delete('*')}", args, scope, tail)
-      elsif head == SYNTAX_QUOTE || macro_var(head, scope)
-        analyze(macroexpand_1(form, scope), scope, tail: tail)
-      else
-        Nodes::Invoke.new(analyze(head, scope), analyze_all(args, scope))
+        method = head.name == "." ? :analyze_dot : :"analyze_#{head.name.delete('*')}"
+        return send(method, args, scope, tail)
       end
+
+      expanded = macroexpand_1(form, scope)
+      return analyze(expanded, scope, tail: tail) unless expanded.equal?(form)
+
+      Nodes::Invoke.new(analyze(head, scope), analyze_all(args, scope))
+    end
+
+    # (. target method args*) or (. target (method args*))
+    def analyze_dot(args, scope, _tail)
+      raise CompilerError, "Malformed member expression, expecting (. target member ...)" if args.size < 2
+
+      target, member, *call_args = args
+      if member.is_a?(List) && !member.empty?
+        call_args = member.rest.to_a
+        member = member.first
+      end
+      unless member.is_a?(Symbol) && member.ns.nil?
+        raise CompilerError, "Malformed member expression, member must be a symbol: #{Printer.pr_str(member)}"
+      end
+
+      Nodes::HostCall.new(analyze(target, scope), Host.method_name(member.name), analyze_all(call_args, scope))
     end
 
     def analyze_def(args, scope, _tail)
