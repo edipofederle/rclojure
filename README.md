@@ -6,7 +6,7 @@ A Clojure dialect hosted on Ruby.
 
 - [x] Milestone 0 — gem skeleton, REPL, test suite
 - [x] Milestone 1 — reader (numbers, strings, symbols, keywords, lists, vectors, maps, sets, quote/syntax-quote/unquote/deref, comments, `#_`)
-- [ ] Milestone 2 — evaluator with special forms (`def`, `if`, `do`, `let*`, `fn*`, `quote`, `loop*`/`recur`, `try`/`throw`)
+- [x] Milestone 2 — analyzer + evaluator with special forms (`def`, `if`, `do`, `let*`, `fn*`, `quote`, `var`, `loop*`/`recur`, `try`/`catch`/`finally`, `throw`)
 - [ ] Milestone 3 — core functions
 - [ ] Milestone 4 — macros + `core.clj` bootstrap
 - [ ] Milestone 5 — seqs, laziness, persistent collections
@@ -18,7 +18,8 @@ A Clojure dialect hosted on Ruby.
 
 ```sh
 bundle install
-bin/rclj          # REPL (currently read + print only)
+bin/rclj          # REPL
+bin/rclj file.clj # run a file
 bundle exec rake  # run tests
 ```
 
@@ -34,3 +35,17 @@ bundle exec rake  # run tests
 | keywords `:foo` | `Symbol` |
 | symbols `foo` | `RClojure::Symbol` |
 | `()` `[]` `{}` `#{}` | `RClojure::List` / `Vector` / `Map` / `Set` |
+| functions | `RClojure::Fn` (rclojure) / `RClojure::Builtin` (Ruby); anything with `#call` is invocable |
+| exceptions | Ruby exceptions; `ex-info` creates `RClojure::ExceptionInfo` |
+
+## Architecture
+
+```
+source ──Reader──▶ forms ──Analyzer──▶ Nodes ──#eval(env)──▶ values
+```
+
+The analyzer resolves symbols to locals or Vars, validates special forms and
+rejects `recur` outside tail position. Nodes are evaluated directly for now;
+milestone 8 will compile them to Ruby instead.
+
+Primitives in `lib/rclojure/core.rb`: `+ - * / < > <= >= = not= ex-info ex-data ex-message`.

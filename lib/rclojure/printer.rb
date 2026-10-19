@@ -19,6 +19,10 @@ module RClojure
       when Vector then "[#{value.map { |v| pr_str(v) }.join(' ')}]"
       when Map then "{#{value.map { |k, v| "#{pr_str(k)} #{pr_str(v)}" }.join(', ')}}"
       when Set then "\#{#{value.map { |v| pr_str(v) }.join(' ')}}"
+      when Var then value.to_s
+      when Fn, Builtin then "#<fn #{value.name || 'anonymous'}>"
+      when ExceptionInfo then "#<ExceptionInfo #{pr_str(value.message)} #{pr_str(value.data)}>"
+      when Exception then "#<#{value.class} #{pr_str(value.message)}>"
       else value.inspect
       end
     end

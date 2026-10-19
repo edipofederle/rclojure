@@ -119,6 +119,15 @@ module RClojure
       Vector.new([*@items, item])
     end
 
+    # Vectors are functions of their indices: ([:a :b] 1) => :b
+    def call(index)
+      unless index.is_a?(Integer) && index.between?(0, size - 1)
+        raise IndexError, "Index #{index} out of bounds for vector of size #{size}"
+      end
+
+      @items[index]
+    end
+
     def inspect
       "#<RClojure::Vector #{@items.inspect}>"
     end
@@ -146,6 +155,11 @@ module RClojure
 
     def key?(key)
       @hash.key?(key)
+    end
+
+    # Maps are functions of their keys: ({:a 1} :a) => 1
+    def call(key, default = nil)
+      @hash.fetch(key, default)
     end
 
     def assoc(key, value)
@@ -192,6 +206,11 @@ module RClojure
 
     def include?(item)
       @items.key?(item)
+    end
+
+    # Sets are functions of their members: (#{:a} :a) => :a
+    def call(item)
+      include?(item) ? item : nil
     end
 
     def size

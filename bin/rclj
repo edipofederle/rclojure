@@ -1,5 +1,9 @@
 #!/usr/bin/env ruby
 require_relative "../lib/rclojure"
-require_relative "../lib/rclojure/repl"
 
-RClojure::REPL.new.run
+if ARGV.empty?
+  require_relative "../lib/rclojure/repl"
+  RClojure::REPL.new.run
+else
+  RClojure::Runtime.new.load_file(ARGV.first)
+end

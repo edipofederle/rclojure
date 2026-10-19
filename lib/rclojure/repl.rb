@@ -1,27 +1,49 @@
 require "reline"
 
 module RClojure
-  # Read-print loop. Evaluation arrives in milestone 2; for now it echoes
-  # each form back so the reader can be exercised interactively.
   class REPL
-    PROMPT = "user=> ".freeze
     CONTINUATION_PROMPT = "  #_=> ".freeze
+
+    def initialize(runtime = Runtime.new)
+      @runtime = runtime
+    end
 
     def run
       puts "rclojure #{VERSION} (Ruby #{RUBY_VERSION}) — Ctrl-D to exit"
       buffer = +""
-      while (line = Reline.readline(buffer.empty? ? PROMPT : CONTINUATION_PROMPT, true))
+      while (line = Reline.readline(buffer.empty? ? prompt : CONTINUATION_PROMPT, true))
         buffer << line << "\n"
         begin
-          Reader.read_all(buffer).each { |form| puts Printer.pr_str(form) }
+          forms = Reader.read_all(buffer)
         rescue EOFError
           next # incomplete form: keep reading lines
-        rescue Error => e
-          warn "Syntax error: #{e.message}"
+        rescue ReaderError => e
+          warn "Syntax error reading source: #{e.message}"
+          forms = []
         end
         buffer = +""
+        forms.each { |form| break unless eval_and_print(form) }
       end
       puts
+    end
+
+    private
+
+    def prompt
+      "#{@runtime.current_ns.name}=> "
+    end
+
+    # Returns false when evaluation failed, so later forms on the same line are skipped.
+    def eval_and_print(form)
+      puts Printer.pr_str(@runtime.eval(form))
+      true
+    rescue CompilerError => e
+      warn "Syntax error compiling: #{e.message}"
+      false
+    rescue StandardError, SystemStackError => e
+      warn "Execution error (#{e.class.name.split('::').last}): #{e.message}"
+      warn "  data: #{Printer.pr_str(e.data)}" if e.is_a?(ExceptionInfo)
+      false
     end
   end
 end
