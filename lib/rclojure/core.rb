@@ -35,15 +35,30 @@ module RClojure
   end
 
   # Clojure's `seq`: an ISeq over coll, or nil when it is empty. Ruby
-  # Arrays and Hashes are seqable too (Hash entries become [k v] vectors).
+  # Arrays and Hashes are seqable too (Hash entries become [k v] vectors),
+  # as is any other Enumerable (Range, Enumerator, ...), lazily.
   def self.seq(coll)
     case coll
     when nil then nil
     when Seqable then coll.seq
     when Array then coll.empty? ? nil : ArraySeq.new(coll, 0)
     when Hash then coll.empty? ? nil : ArraySeq.new(coll.map { |key, value| Vector[key, value] }, 0)
+    when Enumerable then enumerator_seq(coll.each_entry).seq
     else raise Error, "Don't know how to create ISeq from: #{coll.class.name}"
     end
+  end
+
+  # Like Clojure's iterator-seq: a lazy seq pulling items from an
+  # external Enumerator, so infinite ones (`(1..)`) work too.
+  def self.enumerator_seq(enumerator)
+    LazySeq.new(lambda {
+      begin
+        item = enumerator.next
+      rescue StopIteration
+        return nil
+      end
+      Cons.new(item, enumerator_seq(enumerator))
+    })
   end
 
   def self.first(coll)
@@ -111,6 +126,7 @@ module RClojure
       Collections.install(ns)
       Text.install(ns)
       Lang.install(ns, runtime)
+      Interop.install(ns)
     end
 
     def define(ns, name, impl)
@@ -123,3 +139,4 @@ require_relative "core/numbers"
 require_relative "core/collections"
 require_relative "core/text"
 require_relative "core/lang"
+require_relative "core/interop"

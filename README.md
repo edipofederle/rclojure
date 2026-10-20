@@ -10,7 +10,7 @@ A Clojure dialect hosted on Ruby.
 - [x] Milestone 3 — core primitives in Ruby (collections, numbers, strings/printing, atoms, `apply`/`reduce`/`eval`)
 - [x] Milestone 4 — macros, syntax-quote, destructuring, `core.clj` bootstrap (`defn`, `let`, `cond`, `->`, `doseq`, `case`, ...)
 - [ ] Milestone 5 — seqs, laziness, persistent collections (*partial*: seq abstraction, `lazy-seq`, lazy seq library and `for`, linked lists; persistent vectors/maps/sets to do)
-- [ ] Milestone 6 — Ruby interop (*partial*: method calls, class methods, constants)
+- [x] Milestone 6 — Ruby interop (method calls, constants, constructors, blocks, attributes and `set!`, `..`/`doto`, `instance?`, `clj->rb`/`rb->clj`, seqable Enumerables)
 - [ ] Milestone 7 — namespaces
 - [ ] Milestone 8 — compile to Ruby
 
@@ -39,12 +39,11 @@ introduced, and remove it when the gap is closed.
 - `def` discards docstrings; no metadata on vars or collections
 - No dynamic vars or `binding`
 - Single `user` namespace (plus `clojure.core`); no `ns`/`require` — M7
-- Ruby interop is minimal — M6:
-  - no way to pass a block (`(.map arr f)` can't hand `f` to a Ruby block)
-  - no automatic conversion between rclojure collections and Ruby `Array`/`Hash` (Ruby arrays/hashes do work with seq functions, but print in Ruby format)
-  - other Ruby `Enumerable`s (`Range`, `Enumerator`) aren't seqable, unlike Clojure's support for any `Iterable`
-  - no constructor shorthands `(Foo. x)`/`(new Foo x)` (use `(Foo/new x)`), no `..`, `doto` or `set!`
-  - no type hints or `instance?`
+- Ruby interop:
+  - Ruby collections print in Ruby format (`[1, 2]`, `{a: 1}`), and conversion is explicit (`clj->rb`/`rb->clj`); `clj->rb` turns sets into Arrays, like ClojureScript's `clj->js`
+  - Ruby `Enumerable`s other than Array/Hash are seqable but not `count`able, as Java `Iterable`s aren't in Clojure (use `(count (seq x))`)
+  - `set!` only works on Ruby attributes; vars need dynamic vars and `binding`
+  - no type hints (they have no use on Ruby)
 - `catch` takes a bare Ruby exception class name (looked up at top level, then in `RClojure`) or `:default`; no `Throwable`
 - Deep non-tail recursion is limited by the Ruby stack
 
@@ -101,7 +100,24 @@ bundle exec rake  # run tests
 Math/PI                            ; Math::PI
 (Time/now)  String  File::Stat     ; classes are values
 (-> "  some text " .strip .upcase) ; threads through Ruby methods
+
+(String. "abc")  (new String "abc") ; String.new("abc")
+(.map [1 2 3] & inc)               ; [1, 2, 3].map(&inc): & passes the block
+(Array/new 3 & (fn [i] (* i i)))   ; Array.new(3) { |i| i * i }
+(.map ["a" "b"] & :upcase)         ; like Ruby's &:upcase, not a keyword lookup
+(.-x point)                        ; point.x (attribute read)
+(set! (.-x point) 5)               ; point.x = 5, returns 5
+(.. Time (at 0) utc year)          ; Time.at(0).utc.year
+(doto (Array/new) (.push 1) (.push 2))
+(instance? String "a")
+(clj->rb {:a [1 2]})               ; {a: [1, 2]}; rb->clj goes back
+(take 3 (Range/new 1 nil))         ; Ruby Enumerables are lazily seqable
 ```
+
+The value after `&` becomes the block the way Ruby's `&` does, via
+`to_proc` when it has one (rclojure fns, Ruby symbols, procs, methods);
+maps, sets and vectors are invoked as rclojure functions. Ruby code can
+pass rclojure fns as blocks too: `xs.map(&f)`.
 
 ## Architecture
 

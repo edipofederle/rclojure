@@ -20,7 +20,7 @@ module RClojure
         define.("false?", ->(x) { x.equal?(false) })
         define.("boolean", ->(x) { RClojure.truthy?(x) })
         define.("fn?", ->(x) { x.is_a?(Fn) || x.is_a?(Builtin) })
-        define.("type", ->(x) { x.class })
+        define.("type", ->(x) { x&.class })
 
         define.("apply", lambda { |fn, *args|
           raise ArityError, "Wrong number of args (1) passed to: clojure.core/apply" if args.empty?

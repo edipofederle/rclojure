@@ -64,4 +64,89 @@ class TestInterop < Minitest::Test
     assert_raises(CompilerError) { ev("(. 1)") }
     assert_raises(CompilerError) { ev("lowercase-unknown") }
   end
+
+  def test_blocks
+    assert_equal [2, 3, 4], ev("(.map [1 2 3] & inc)")
+    assert_equal [0, 1, 4], ev("(Array/new 3 & (fn [i] (* i i)))")
+    assert_equal 6, ev("(.reduce [1 2 3] & +)")
+    assert_equal [[:a, 0], [:b, 1]], ev("(.map (.each-with-index [:a :b]) & (fn [x i] [x i]))").map(&:to_a)
+    assert_equal [1], ev("(.each-with-object {:a 1} (Array/new) & (fn [[k v] acc] (.push acc v)))")
+    assert_equal [2, 4], ev("(. [1 2] (map & (fn [x] (* 2 x))))")
+  end
+
+  def test_block_values_convert_like_rubys_ampersand
+    assert_equal %w[A B], ev('(.map ["a" "b"] & :upcase)')
+    assert_equal [1, 2], ev("(.map [:a :b] & {:a 1 :b 2})")
+    assert_equal [:x, nil], ev('(.map [:x :y] & #{:x})')
+    assert_equal [2, 4], [1, 2].map(&ev("(fn [x] (* 2 x))"))
+  end
+
+  def test_block_errors
+    assert_raises(CompilerError) { ev("(.map [1] & inc 2)") }
+    assert_raises(CompilerError) { ev("(.map [1] &)") }
+    assert_raises(ArityError) { ev("(.each-with-index [1] & (fn [x] x))") }
+  end
+
+  def test_constructors
+    assert_ev "abc", '(String. "abc")'
+    assert_ev "x", '(new String "x")'
+    assert_ev (1..3), "(Range. 1 3)"
+    assert_equal [0, 1], ev("(Array. 2 & (fn [i] i))")
+    assert_ev true, '(instance? File::Stat (File::Stat. "."))'
+    assert_ev ev("'(new String \"x\")"), '(macroexpand-1 \'(String. "x"))'
+    assert_raises(CompilerError) { ev("(new Nope)") }
+    assert_raises(CompilerError) { ev("(Math. 1)") }
+    assert_raises(CompilerError) { ev("(new (identity String))") }
+  end
+
+  def test_double_dot_and_doto
+    assert_ev "**HELLO**", '(.. "hello" upcase (center 9 "*"))'
+    assert_ev 1970, "(.. Time (at 0) utc year)"
+    assert_equal [1, 2], ev("(doto (Array/new) (.push 1) (.push 2))")
+    assert_equal({ a: 1 }, ev("(doto (Hash/new) (.store :a 1))"))
+  end
+
+  def test_attributes_and_set!
+    ev "(def Point (Struct/new :x))"
+    ev "(def p (.new Point 1))"
+    assert_ev 1, "(.-x p)"
+    assert_ev 5, "(set! (.-x p) 5)"
+    assert_ev 5, "(.x p)"
+    assert_ev 6, "(do (set! (.x p) 6) (.-x p))"
+    assert_ev 7, "(do (set! (. p x) 7) (. p -x))"
+    assert_ev 8, "(do (set! (. p -x) 8) (.-x p))"
+    assert_raises(CompilerError) { ev("(.-x p 1)") }
+    assert_raises(CompilerError) { ev("(let [y 1] (set! y 2))") }
+    assert_raises(CompilerError) { ev("(set! p 2)") }
+    assert_raises(CompilerError) { ev("(set! (.x p 1) 2)") }
+    assert_raises(CompilerError) { ev("(set! 1 2)") }
+  end
+
+  def test_instance_and_class
+    assert_ev true, '(instance? String "a")'
+    assert_ev false, "(instance? Integer 1.0)"
+    assert_ev true, "(instance? Comparable 1)"
+    assert_ev String, '(class "a")'
+    assert_ev nil, "(class nil)"
+    assert_ev nil, "(type nil)"
+  end
+
+  def test_converting_collections
+    assert_equal({ a: [1, 2], "b" => [3] }, ev("(clj->rb {:a [1 2] 'b \#{3}})"))
+    assert_equal [2, 3], ev("(clj->rb (map inc [1 2]))")
+    assert_nil ev("(clj->rb nil)")
+    assert_ev Vector[1, 2, 3], "(rb->clj (.to-a (Range/new 1 3)))"
+    assert_ev Set[1, 2], "(rb->clj (Set/new [1 2]))"
+    assert_ev true, "(= {:a [1 {:b 2}]} (rb->clj (clj->rb {:a [1 {:b 2}]})))"
+    assert_ev Map[{ a: Vector[1] }], "(rb->clj {:a (Array/new 1 1)})"
+  end
+
+  def test_ruby_enumerables_are_seqable
+    assert_ev List[1, 2, 3], "(seq (Range/new 1 3))"
+    assert_ev nil, "(seq (Range/new 1 0))"
+    assert_ev List[1, 2, 3], "(take 3 (Range/new 1 nil))"
+    assert_ev List[2, 3], "(map inc (Range/new 1 2))"
+    assert_ev "a", '(first (.each-char "abc"))'
+    assert_ev List[1, 2], "(seq (Set/new [1 2]))"
+  end
 end

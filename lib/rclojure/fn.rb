@@ -37,6 +37,11 @@ module RClojure
       method(:call).to_proc
     end
 
+    # Lets Ruby code pass an rclojure fn as a block: `xs.map(&fn)`.
+    def to_proc
+      method(:call).to_proc
+    end
+
     def inspect
       "#<RClojure::Fn #{name || 'anonymous'}>"
     end

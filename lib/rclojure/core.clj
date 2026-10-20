@@ -661,6 +661,22 @@
     `(let [iter# ~(emit-bind (to-groups seq-exprs))]
        (iter# ~(second seq-exprs)))))
 
+;;; Ruby interop
+
+(defmacro ..
+  ([x form] `(. ~x ~form))
+  ([x form & more] `(.. (. ~x ~form) ~@more)))
+
+(defmacro doto [x & forms]
+  (let [gx (gensym)]
+    `(let [~gx ~x]
+       ~@(map (fn [f]
+                (if (seq? f)
+                  `(~(first f) ~gx ~@(next f))
+                  `(~f ~gx)))
+              forms)
+       ~gx)))
+
 ;;; Map functions
 
 (defn merge [& maps]

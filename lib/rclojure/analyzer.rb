@@ -1,8 +1,9 @@
 module RClojure
   # Turns forms into Nodes, resolving symbols and validating special forms.
   class Analyzer
-    SPECIAL_FORMS = %w[def if do let* loop* recur fn* quote var throw try .].freeze
+    SPECIAL_FORMS = %w[def if do let* loop* recur fn* quote var throw try . new set!].freeze
     DOT = Symbol.new(nil, ".")
+    NEW = Symbol.new(nil, "new")
     SYNTAX_QUOTE = Symbol.new(nil, "syntax-quote")
     AMPERSAND = Symbol.new(nil, "&")
     CATCH = Symbol.new(nil, "catch")
@@ -48,11 +49,11 @@ module RClojure
       head = form.first
       return SyntaxQuote.new(@runtime).expand(form.to_a[1]) if head == SYNTAX_QUOTE
 
-      host_form = expand_host_shorthand(form, scope)
-      return host_form if host_form
-
+      # Like Clojure, macros win over interop shorthands (e.g. `..`).
       macro = macro_var(head, scope)
-      macro ? expand_macro(macro, form, scope) : form
+      return expand_macro(macro, form, scope) if macro
+
+      expand_host_shorthand(form, scope) || form
     end
 
     def macroexpand(form, scope = Scope::EMPTY)
@@ -97,6 +98,8 @@ module RClojure
     end
 
     #   (.method target args*)  => (. target method args*)
+    #   (.-attr target)         => (. target -attr)
+    #   (Class. args*)          => (new Class args*)
     #   (Class/method args*)    => (. Class method args*)
     def expand_host_shorthand(form, scope)
       head = form.first
@@ -107,6 +110,8 @@ module RClojure
         raise CompilerError, "Malformed member expression, expecting (#{head} target ...)" if args.empty?
 
         List[DOT, args.first, Symbol.new(nil, head.name[1..]), *args.drop(1)]
+      elsif head.ns.nil? && head.name.end_with?(".") && head.name.size > 1 && !scope.locals.key?(head.name)
+        List[NEW, Symbol.new(nil, head.name.chomp(".")), *args]
       elsif head.ns && @runtime.find_namespace(head.ns).nil? && Host.module?(head.ns)
         List[DOT, Symbol.new(nil, head.ns), Symbol.new(nil, head.name), *args]
       end
@@ -159,7 +164,8 @@ module RClojure
       Nodes::Invoke.new(analyze(head, scope), analyze_all(args, scope))
     end
 
-    # (. target method args*) or (. target (method args*))
+    # (. target method args*), (. target (method args*)) or (. target -attr).
+    # `& f` after the args passes f as the Ruby block.
     def analyze_dot(args, scope, _tail)
       raise CompilerError, "Malformed member expression, expecting (. target member ...)" if args.size < 2
 
@@ -172,7 +178,63 @@ module RClojure
         raise CompilerError, "Malformed member expression, member must be a symbol: #{Printer.pr_str(member)}"
       end
 
-      Nodes::HostCall.new(analyze(target, scope), Host.method_name(member.name), analyze_all(call_args, scope))
+      if member.name.start_with?("-")
+        raise CompilerError, "Attribute access (#{member}) takes no arguments" unless call_args.empty?
+
+        member = Symbol.new(nil, member.name[1..])
+      end
+      host_call(analyze(target, scope), Host.method_name(member.name), call_args, scope)
+    end
+
+    # (new Class args*), with an optional `& f` block like `.` calls.
+    def analyze_new(args, scope, _tail)
+      class_name = args.first
+      klass = class_name.is_a?(Symbol) ? host_constant(class_name) : Host::NOT_FOUND
+      unless klass.is_a?(Class)
+        raise CompilerError, "Unable to resolve classname: #{Printer.pr_str(class_name)}"
+      end
+
+      host_call(Nodes::Const.new(klass), :new, args.drop(1), scope)
+    end
+
+    def host_call(target_node, method, call_args, scope)
+      amp = call_args.index(AMPERSAND)
+      block = nil
+      if amp
+        unless call_args.size == amp + 2
+          raise CompilerError, "& in a host call must be followed by exactly one block fn"
+        end
+
+        block = analyze(call_args.last, scope)
+        call_args = call_args.first(amp)
+      end
+      Nodes::HostCall.new(target_node, method, analyze_all(call_args, scope), block)
+    end
+
+    # (set! (. target attr) value) calls the Ruby setter `attr=`; also
+    # accepts the (.attr target) and (.-attr target) shorthands.
+    def analyze_set!(args, scope, _tail)
+      raise CompilerError, "Malformed assignment, expecting (set! target val)" unless args.size == 2
+
+      place, value = args
+      case place
+      when Symbol
+        if place.ns.nil? && scope.locals.key?(place.name)
+          raise CompilerError, "Cannot assign to non-mutable: #{place}"
+        end
+
+        # Clojure only allows set! on vars with a thread binding, and
+        # rclojure has no dynamic vars yet.
+        raise CompilerError, "Can't change/establish root binding of: #{resolve_var(place)} with set"
+      when ISeq
+        call = analyze(place, scope)
+        unless call.is_a?(Nodes::HostCall) && call.args.empty? && call.block.nil? && call.method != :new
+          raise CompilerError, "Invalid assignment target: #{Printer.pr_str(place)}"
+        end
+
+        Nodes::HostAssign.new(call.target, :"#{call.method}=", analyze(value, scope))
+      else raise CompilerError, "Invalid assignment target: #{Printer.pr_str(place)}"
+      end
     end
 
     def analyze_def(args, scope, _tail)

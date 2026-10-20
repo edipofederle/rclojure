@@ -140,9 +140,21 @@ module RClojure
     end
 
     # A Ruby method call: (. target method args*)
-    HostCall = Struct.new(:target, :method, :args) do
+    HostCall = Struct.new(:target, :method, :args, :block) do
       def eval(env)
-        target.eval(env).public_send(method, *args.map { |arg| arg.eval(env) })
+        receiver = target.eval(env)
+        values = args.map { |arg| arg.eval(env) }
+        receiver.public_send(method, *values, &(block && Host.block(block.eval(env))))
+      end
+    end
+
+    # A set! on a Ruby attribute: calls the setter, returns the value.
+    HostAssign = Struct.new(:target, :setter, :value) do
+      def eval(env)
+        receiver = target.eval(env)
+        result = value.eval(env)
+        receiver.public_send(setter, result)
+        result
       end
     end
 
