@@ -142,7 +142,9 @@ class TestMacros < Minitest::Test
     assert_ev nil, "(doseq [x [1]] x)"
     assert_output("012") { ev("(dotimes [i 3] (print i))") }
     assert_ev 3, "(def c (atom 0)) (while (< @c 3) (swap! c inc)) @c"
-    assert_raises(CompilerError) { ev("(doseq [x [1] :while true] x)") }
+    assert_ev Vector[Vector[1, :a], Vector[2, :a]],
+              "(def d (atom [])) (doseq [x [1 2 3] :while (< x 3) y [:a :b] :while (= y :a)] (swap! d conj [x y])) @d"
+    assert_raises(CompilerError) { ev("(doseq [x [1] :until true] x)") }
   end
 
   def test_declare_and_assert

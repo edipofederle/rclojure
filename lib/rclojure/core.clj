@@ -289,23 +289,31 @@
        (loop [~i 0]
          (when (< ~i n#) ~@body (recur (inc ~i)))))))
 
-(defn- emit-doseq [bindings body]
-  (if (seq bindings)
-    (let [b (first bindings) v (second bindings) more (nnext bindings)]
-      (cond
-        (= b :let) `(let ~v ~(emit-doseq more body))
-        (= b :when) `(when ~v ~(emit-doseq more body))
-        (keyword? b) (throw (ex-info (str "Unsupported doseq modifier: " b) {:modifier b}))
-        :else (let [s (gensym "seq__")]
-                `(loop [~s (seq ~v)]
-                   (when ~s
-                     (let [~b (first ~s)] ~(emit-doseq more body))
-                     (recur (next ~s)))))))
-    `(do ~@body)))
-
+;; Ported from Clojure's doseq, without chunked-seq handling. step returns
+;; [needs-recur? form]: :while and :when take over the recur themselves.
 (defmacro doseq [bindings & body]
   (check-bindings "doseq" bindings)
-  `(do ~(emit-doseq (seq bindings) body) nil))
+  (let [step (fn step [recform exprs]
+               (if-not exprs
+                 [true `(do ~@body)]
+                 (let [k (first exprs)
+                       v (second exprs)]
+                   (if (keyword? k)
+                     (let [[needrec subform] (step recform (nnext exprs))]
+                       (cond
+                         (= k :let) [needrec `(let ~v ~subform)]
+                         (= k :while) [false `(when ~v ~subform ~@(when needrec [recform]))]
+                         (= k :when) [false `(if ~v (do ~subform ~@(when needrec [recform])) ~recform)]
+                         :else (throw (ex-info (str "Invalid 'doseq' keyword " k) {:keyword k}))))
+                     (let [s (gensym "seq__")
+                           recform `(recur (next ~s))
+                           [needrec subform] (step recform (nnext exprs))]
+                       [true `(loop [~s (seq ~v)]
+                                (when ~s
+                                  (let [~k (first ~s)]
+                                    ~subform
+                                    ~@(when needrec [recform]))))])))))]
+    (second (step nil (seq bindings)))))
 
 (defn- case-test [g test]
   (if (seq? test)
@@ -344,7 +352,7 @@
       (throw (ex-info (str "Assert failed: " (let [m# ~message] (if m# (str m# "\n") "")) (pr-str '~x))
                       {:form '~x})))))
 
-;;; Sequence functions (eager until lazy seqs land)
+;;; Eager sequence functions
 
 (defn reverse [coll] (reduce conj () coll))
 
@@ -379,13 +387,6 @@
           {}
           coll))
 
-(defn interpose [sep coll]
-  (loop [ret [] xs (seq coll)]
-    (cond
-      (nil? xs) (seq ret)
-      (empty? ret) (recur (conj ret (first xs)) (next xs))
-      :else (recur (conj ret sep (first xs)) (next xs)))))
-
 ;;; Function combinators
 
 (defn complement [f]
@@ -411,6 +412,254 @@
 
 (defn fnil [f default]
   (fn [x & args] (apply f (if (nil? x) default x) args)))
+
+;;; Lazy sequences
+;;
+;; Ported from Clojure's core.clj, minus chunked seqs and transducer
+;; arities. range is backed by RClojure::RangeSeq, as Clojure's is by
+;; LongRange; concat is a Ruby primitive (see core/collections.rb).
+
+(defn dorun
+  ([coll]
+   (loop [s (seq coll)]
+     (when s (recur (next s)))))
+  ([n coll]
+   (loop [n n s (seq coll)]
+     (when (and s (pos? n)) (recur (dec n) (next s))))))
+
+(defn doall
+  ([coll] (dorun coll) coll)
+  ([n coll] (dorun n coll) coll))
+
+(defn map
+  ([f coll]
+   (lazy-seq
+    (when-let [s (seq coll)]
+      (cons (f (first s)) (map f (rest s))))))
+  ([f c1 c2]
+   (lazy-seq
+    (let [s1 (seq c1) s2 (seq c2)]
+      (when (and s1 s2)
+        (cons (f (first s1) (first s2))
+              (map f (rest s1) (rest s2)))))))
+  ([f c1 c2 c3]
+   (lazy-seq
+    (let [s1 (seq c1) s2 (seq c2) s3 (seq c3)]
+      (when (and s1 s2 s3)
+        (cons (f (first s1) (first s2) (first s3))
+              (map f (rest s1) (rest s2) (rest s3)))))))
+  ([f c1 c2 c3 & colls]
+   (let [step (fn step [cs]
+                (lazy-seq
+                 (let [ss (map seq cs)]
+                   (when (every? identity ss)
+                     (cons (map first ss) (step (map rest ss)))))))]
+     (map (fn [args] (apply f args)) (step (conj colls c3 c2 c1))))))
+
+(defn mapcat [f & colls]
+  (apply concat (apply map f colls)))
+
+(defn filter [pred coll]
+  (lazy-seq
+   (when-let [s (seq coll)]
+     (let [f (first s) r (rest s)]
+       (if (pred f)
+         (cons f (filter pred r))
+         (filter pred r))))))
+
+(defn remove [pred coll]
+  (filter (complement pred) coll))
+
+(defn keep [f coll]
+  (lazy-seq
+   (when-let [s (seq coll)]
+     (let [x (f (first s))]
+       (if (nil? x)
+         (keep f (rest s))
+         (cons x (keep f (rest s))))))))
+
+(defn map-indexed [f coll]
+  (let [mapi (fn mapi [idx coll]
+               (lazy-seq
+                (when-let [s (seq coll)]
+                  (cons (f idx (first s)) (mapi (inc idx) (rest s))))))]
+    (mapi 0 coll)))
+
+(defn mapv
+  ([f coll] (reduce (fn [v x] (conj v (f x))) [] coll))
+  ([f c1 c2 & colls] (into [] (apply map f c1 c2 colls))))
+
+(defn filterv [pred coll]
+  (reduce (fn [v x] (if (pred x) (conj v x) v)) [] coll))
+
+(defn take [n coll]
+  (lazy-seq
+   (when (pos? n)
+     (when-let [s (seq coll)]
+       (cons (first s) (take (dec n) (rest s)))))))
+
+(defn take-while [pred coll]
+  (lazy-seq
+   (when-let [s (seq coll)]
+     (when (pred (first s))
+       (cons (first s) (take-while pred (rest s)))))))
+
+(defn drop [n coll]
+  (let [step (fn [n coll]
+               (let [s (seq coll)]
+                 (if (and (pos? n) s)
+                   (recur (dec n) (rest s))
+                   s)))]
+    (lazy-seq (step n coll))))
+
+(defn drop-while [pred coll]
+  (let [step (fn [pred coll]
+               (let [s (seq coll)]
+                 (if (and s (pred (first s)))
+                   (recur pred (rest s))
+                   s)))]
+    (lazy-seq (step pred coll))))
+
+(defn take-nth [n coll]
+  (lazy-seq
+   (when-let [s (seq coll)]
+     (cons (first s) (take-nth n (drop n s))))))
+
+(defn take-last [n coll]
+  (loop [s (seq coll) lead (seq (drop n coll))]
+    (if lead
+      (recur (next s) (next lead))
+      s)))
+
+(defn drop-last
+  ([coll] (drop-last 1 coll))
+  ([n coll] (map (fn [x _] x) coll (drop n coll))))
+
+(defn split-at [n coll]
+  [(take n coll) (drop n coll)])
+
+(defn split-with [pred coll]
+  [(take-while pred coll) (drop-while pred coll)])
+
+(defn repeat
+  ([x] (lazy-seq (cons x (repeat x))))
+  ([n x] (take n (repeat x))))
+
+(defn repeatedly
+  ([f] (lazy-seq (cons (f) (repeatedly f))))
+  ([n f] (take n (repeatedly f))))
+
+(defn iterate [f x]
+  (cons x (lazy-seq (iterate f (f x)))))
+
+(defn cycle [coll]
+  (lazy-seq
+   (when-let [s (seq coll)]
+     (concat s (cycle s)))))
+
+(defn range
+  ([] (iterate inc 0))
+  ([end] (range 0 end 1))
+  ([start end] (range start end 1))
+  ([start end step]
+   (cond
+     (not (zero? step)) (or (RClojure::RangeSeq/create start end step) ())
+     (= start end) ()
+     :else (repeat start))))
+
+(defn interleave
+  ([] ())
+  ([c1] (lazy-seq c1))
+  ([c1 c2]
+   (lazy-seq
+    (let [s1 (seq c1) s2 (seq c2)]
+      (when (and s1 s2)
+        (cons (first s1) (cons (first s2) (interleave (rest s1) (rest s2))))))))
+  ([c1 c2 & colls]
+   (lazy-seq
+    (let [ss (map seq (conj colls c2 c1))]
+      (when (every? identity ss)
+        (concat (map first ss) (apply interleave (map rest ss))))))))
+
+(defn interpose [sep coll]
+  (drop 1 (interleave (repeat sep) coll)))
+
+(defn partition
+  ([n coll] (partition n n coll))
+  ([n step coll]
+   (lazy-seq
+    (when-let [s (seq coll)]
+      (let [p (doall (take n s))]
+        (when (= n (count p))
+          (cons p (partition n step (nthrest s step))))))))
+  ([n step pad coll]
+   (lazy-seq
+    (when-let [s (seq coll)]
+      (let [p (doall (take n s))]
+        (if (= n (count p))
+          (cons p (partition n step pad (nthrest s step)))
+          (list (take n (concat p pad)))))))))
+
+(defn partition-all
+  ([n coll] (partition-all n n coll))
+  ([n step coll]
+   (lazy-seq
+    (when-let [s (seq coll)]
+      (let [seg (doall (take n s))]
+        (cons seg (partition-all n step (nthrest s step))))))))
+
+(defn distinct [coll]
+  (let [step (fn step [xs seen]
+               (lazy-seq
+                ((fn [[f :as xs] seen]
+                   (when-let [s (seq xs)]
+                     (if (contains? seen f)
+                       (recur (rest s) seen)
+                       (cons f (step (rest s) (conj seen f))))))
+                 xs seen)))]
+    (step coll #{})))
+
+(defmacro lazy-cat [& colls]
+  `(concat ~@(map (fn [c] (list `lazy-seq c)) colls)))
+
+;; Ported from Clojure's for, without the chunked-seq fast path. Each
+;; binding becomes a fn walking its seq; inner bindings are concatenated.
+(defmacro for [seq-exprs body-expr]
+  (check-bindings "for" seq-exprs)
+  (let [to-groups (fn [seq-exprs]
+                    (reduce (fn [groups [k v]]
+                              (if (keyword? k)
+                                (conj (pop groups) (conj (peek groups) [k v]))
+                                (conj groups [k v])))
+                            [] (partition 2 seq-exprs)))
+        emit-bind (fn emit-bind [[[bind expr & mod-pairs]
+                                  & [[_ next-expr] :as next-groups]]]
+                    (let [giter (gensym "iter__")
+                          gxs (gensym "s__")
+                          do-mod (fn do-mod [[[k v] & etc]]
+                                   (cond
+                                     (= k :let) `(let ~v ~(do-mod etc))
+                                     (= k :while) `(when ~v ~(do-mod etc))
+                                     (= k :when) `(if ~v
+                                                    ~(do-mod etc)
+                                                    (recur (rest ~gxs)))
+                                     (keyword? k) (throw (ex-info (str "Invalid 'for' keyword " k) {:keyword k}))
+                                     next-groups
+                                     `(let [iterys# ~(emit-bind next-groups)
+                                            fs# (seq (iterys# ~next-expr))]
+                                        (if fs#
+                                          (concat fs# (~giter (rest ~gxs)))
+                                          (recur (rest ~gxs))))
+                                     :else `(cons ~body-expr
+                                                  (~giter (rest ~gxs)))))]
+                      `(fn ~giter [~gxs]
+                         (lazy-seq
+                          (loop [~gxs ~gxs]
+                            (when-let [~gxs (seq ~gxs)]
+                              (let [~bind (first ~gxs)]
+                                ~(do-mod mod-pairs))))))))]
+    `(let [iter# ~(emit-bind (to-groups seq-exprs))]
+       (iter# ~(second seq-exprs)))))
 
 ;;; Map functions
 

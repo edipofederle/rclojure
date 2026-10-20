@@ -9,7 +9,7 @@ A Clojure dialect hosted on Ruby.
 - [x] Milestone 2 — analyzer + evaluator with special forms (`def`, `if`, `do`, `let*`, `fn*`, `quote`, `var`, `loop*`/`recur`, `try`/`catch`/`finally`, `throw`)
 - [x] Milestone 3 — core primitives in Ruby (collections, numbers, strings/printing, atoms, `apply`/`reduce`/`eval`)
 - [x] Milestone 4 — macros, syntax-quote, destructuring, `core.clj` bootstrap (`defn`, `let`, `cond`, `->`, `doseq`, `case`, ...)
-- [ ] Milestone 5 — seqs, laziness, persistent collections (*partial*: seq abstraction, `lazy-seq`, linked lists)
+- [ ] Milestone 5 — seqs, laziness, persistent collections (*partial*: seq abstraction, `lazy-seq`, lazy seq library and `for`, linked lists; persistent vectors/maps/sets to do)
 - [ ] Milestone 6 — Ruby interop (*partial*: method calls, class methods, constants)
 - [ ] Milestone 7 — namespaces
 - [ ] Milestone 8 — compile to Ruby
@@ -32,10 +32,9 @@ introduced, and remove it when the gap is closed.
 - Floats with an `M` suffix are read as `Float`, not `BigDecimal`
 
 **Language**
-- Missing macros/forms: `for` (needs lazy seqs — M5), `letfn`, `defonce`, `defmulti`/`defmethod`, protocols and records
+- Missing macros/forms: `letfn`, `defonce`, `defmulti`/`defmethod`, protocols and records
 - `defn-` is an alias for `defn` (no private vars); `defn` skips attr-maps and ignores `{:pre :post}` conditions
 - `case` is a linear chain of `=` tests (no constant-time dispatch or duplicate-constant check)
-- `doseq` supports `:let` and `:when` but not `:while`
 - Macros are flagged with a non-standard `set-macro!` builtin instead of `:macro` metadata; `&env` maps symbols to internal `LocalBinding` objects
 - `def` discards docstrings; no metadata on vars or collections
 - No dynamic vars or `binding`
@@ -51,7 +50,7 @@ introduced, and remove it when the gap is closed.
 
 **Data**
 - Vectors, maps and sets copy on every update (O(n)), no structural sharing — M5 (lists are linked, with O(1) `cons`/`rest`)
-- `lazy-seq` exists, but the seq library is still eager (`concat`, `interpose`, ...) and `map`/`filter`/`range`/`take`/`doall` don't exist yet — M5
+- No transducers: `map`, `filter`, `take`, ... have no transducer arity, and there is no `reduced`, `transduce`, `sequence` or `eduction`
 - Lazy seqs are never chunked, so side effects happen one item at a time rather than 32 at a time as with Clojure's chunked seqs
 - `apply` realizes its whole argument seq, so it can't take an infinite seq
 - Lazy seq realization isn't synchronized, so sharing an unrealized seq between Ruby threads can run its body twice
@@ -63,7 +62,7 @@ introduced, and remove it when the gap is closed.
 
 **Performance**
 - Tree-walking interpreter: a 1M-iteration `loop*` takes ~7s — M8, and see the YJIT TODO
-- Every `Runtime` evaluates `core.clj` from source at startup (~50ms), which also dominates the test suite's run time
+- Every `Runtime` evaluates `core.clj` from source at startup (~90ms), which also dominates the test suite's run time
 
 ## Usage
 

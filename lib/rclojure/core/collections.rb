@@ -25,7 +25,7 @@ module RClojure
         define.("rest", ->(coll) { RClojure.rest(coll) })
         define.("next", ->(coll) { RClojure.next(coll) })
         define.("cons", ->(item, coll) { RClojure.cons(item, coll) })
-        define.("concat", ->(*colls) { List.from(colls.flat_map { |coll| RClojure.items(coll) }) })
+        define.("concat", ->(*colls) { concat(colls) })
         define.("realized?", ->(x) { x.realized? })
         define.("conj", lambda { |*args|
           return Vector[] if args.empty?
@@ -68,6 +68,19 @@ module RClojure
         define.("vector?", ->(x) { x.is_a?(Vector) })
         define.("map?", ->(x) { x.is_a?(Map) })
         define.("set?", ->(x) { x.is_a?(Set) })
+      end
+
+      # Clojure's concat: lazy, and each coll is only seq'd once reached.
+      # Defined here rather than in core.clj because syntax-quote
+      # expansions call it before core.clj has defined lazy-seq.
+      def concat(colls)
+        LazySeq.new(lambda {
+          colls.each_with_index do |coll, i|
+            s = RClojure.seq(coll)
+            return Cons.new(s.first, concat([s.rest, *colls.drop(i + 1)])) if s
+          end
+          nil
+        })
       end
 
       def conj(coll, item)
