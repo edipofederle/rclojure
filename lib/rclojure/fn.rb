@@ -18,7 +18,7 @@ module RClojure
       values = args.first(method.required)
       if method.rest
         extra = args.drop(method.required)
-        values << (extra.empty? ? nil : List.new(extra))
+        values << (extra.empty? ? nil : ArraySeq.new(extra, 0))
       end
 
       loop do

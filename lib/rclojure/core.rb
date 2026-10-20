@@ -34,25 +34,67 @@ module RClojure
     end
   end
 
-  # The items of a collection as a Ruby Array; map entries become [k v]
-  # vectors. This stands in for the seq abstraction until lazy seqs land.
-  def self.items(coll)
+  # Clojure's `seq`: an ISeq over coll, or nil when it is empty. Ruby
+  # Arrays and Hashes are seqable too (Hash entries become [k v] vectors).
+  def self.seq(coll)
     case coll
-    when nil then []
-    when Sequential, Set then coll.to_a
-    when Map then coll.map { |key, value| Vector[key, value] }
-    when Array then coll
-    when Hash then coll.map { |key, value| Vector[key, value] }
+    when nil then nil
+    when Seqable then coll.seq
+    when Array then coll.empty? ? nil : ArraySeq.new(coll, 0)
+    when Hash then coll.empty? ? nil : ArraySeq.new(coll.map { |key, value| Vector[key, value] }, 0)
     else raise Error, "Don't know how to create ISeq from: #{coll.class.name}"
     end
   end
 
-  # Clojure's `seq`: nil for an empty collection, otherwise a list.
-  def self.seq(coll)
-    return coll if coll.is_a?(List) && !coll.empty?
+  def self.first(coll)
+    coll.is_a?(ISeq) ? coll.first : seq(coll)&.first
+  end
 
-    items = items(coll)
-    items.empty? ? nil : List.new(items)
+  def self.rest(coll)
+    return coll.rest if coll.is_a?(ISeq)
+
+    s = seq(coll)
+    s ? s.rest : List::EMPTY
+  end
+
+  def self.next(coll)
+    coll.is_a?(ISeq) ? coll.next : seq(coll)&.next
+  end
+
+  def self.cons(item, coll)
+    case coll
+    when nil then List[item]
+    when ISeq then Cons.new(item, coll)
+    else Cons.new(item, seq(coll))
+    end
+  end
+
+  # Yields each item of a seqable collection, walking seqs one step at a
+  # time so lazy seqs are realized only as far as the block goes.
+  def self.each_item(coll, &block)
+    case coll
+    when nil then nil
+    when Vector, Set, Array then coll.each(&block)
+    else
+      s = seq(coll)
+      while s
+        yield s.first
+        s = s.next
+      end
+    end
+  end
+
+  # All the items of a seqable collection as a Ruby Array (realizing lazy
+  # seqs fully), for primitives that need them at once.
+  def self.items(coll)
+    case coll
+    when Array then coll
+    when Vector then coll.to_a
+    else
+      items = []
+      each_item(coll) { |item| items << item }
+      items
+    end
   end
 
   def self.truthy?(value)

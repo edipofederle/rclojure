@@ -32,7 +32,7 @@ module RClojure
     def analyze(form, scope = Scope::EMPTY, tail: false)
       case form
       when Symbol then analyze_symbol(form, scope)
-      when List then form.empty? ? Nodes::Const.new(form) : analyze_seq(form, scope, tail)
+      when ISeq then form.empty? ? Nodes::Const.new(List::EMPTY) : analyze_seq(form, scope, tail)
       when Vector then Nodes::VectorNode.new(analyze_all(form, scope))
       when Set then Nodes::SetNode.new(analyze_all(form, scope))
       when Map then Nodes::MapNode.new(form.map { |k, v| [analyze(k, scope), analyze(v, scope)] })
@@ -43,7 +43,7 @@ module RClojure
     # Expands form once if it is a macro call, a syntax-quote or interop
     # shorthand; otherwise returns it unchanged.
     def macroexpand_1(form, scope = Scope::EMPTY)
-      return form unless form.is_a?(List) && !form.empty?
+      return form unless form.is_a?(ISeq) && !form.empty?
 
       head = form.first
       return SyntaxQuote.new(@runtime).expand(form.to_a[1]) if head == SYNTAX_QUOTE
@@ -164,7 +164,7 @@ module RClojure
       raise CompilerError, "Malformed member expression, expecting (. target member ...)" if args.size < 2
 
       target, member, *call_args = args
-      if member.is_a?(List) && !member.empty?
+      if member.is_a?(ISeq) && !member.empty?
         call_args = member.rest.to_a
         member = member.first
       end
@@ -293,11 +293,11 @@ module RClojure
       self_binding = name && LocalBinding.new(local_name(name, "fn*"))
       scope = scope.with_locals([self_binding]) if self_binding
 
-      method_forms = args.first.is_a?(Vector) ? [List.new(args)] : args
+      method_forms = args.first.is_a?(Vector) ? [List.from(args)] : args
       raise CompilerError, "fn* requires a parameter vector" if method_forms.empty?
 
       methods = method_forms.map do |method_form|
-        unless method_form.is_a?(List) && method_form.first.is_a?(Vector)
+        unless method_form.is_a?(ISeq) && method_form.first.is_a?(Vector)
           raise CompilerError, "Invalid fn* method, expected ([params*] body*), got: #{Printer.pr_str(method_form)}"
         end
 
@@ -355,7 +355,7 @@ module RClojure
     end
 
     def clause?(form, symbol)
-      form.is_a?(List) && form.first == symbol
+      form.is_a?(ISeq) && form.first == symbol
     end
 
     def analyze_catch(args, scope)

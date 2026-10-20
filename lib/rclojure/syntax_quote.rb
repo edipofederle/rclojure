@@ -21,7 +21,7 @@ module RClojure
     def expand(form)
       case form
       when Symbol then List[QUOTE, qualify(form)]
-      when List then expand_list(form)
+      when ISeq then expand_list(form)
       when Vector then apply_to("vector", form)
       when Set then apply_to("hash-set", form)
       when Map then apply_to("hash-map", form.flat_map { |key, value| [key, value] })
@@ -60,7 +60,7 @@ module RClojure
     end
 
     def form_of?(item, head)
-      item.is_a?(List) && item.first == head
+      item.is_a?(ISeq) && item.first == head
     end
 
     def qualify(symbol)

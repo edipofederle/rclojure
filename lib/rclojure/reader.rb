@@ -76,7 +76,7 @@ module RClojure
       error("Unexpected end of input", EOFError) if eof?
 
       case @scanner.peek(1)
-      when "(" then @scanner.getch; List.new(read_until(")"))
+      when "(" then @scanner.getch; List.from(read_until(")"))
       when "[" then @scanner.getch; Vector.new(read_until("]"))
       when "{" then @scanner.getch; read_map
       when ")", "]", "}" then error("Unmatched delimiter: #{@scanner.peek(1)}")

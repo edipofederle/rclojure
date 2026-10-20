@@ -33,7 +33,7 @@ module RClojure
       when ::Symbol then ":#{value}"
       when Rational then value.denominator == 1 ? value.numerator.to_s : "#{value.numerator}/#{value.denominator}"
       when Numeric, Symbol then value.to_s
-      when List then "(#{write_all(value, readably)})"
+      when ISeq then "(#{write_all(value, readably)})"
       when Vector then "[#{write_all(value, readably)}]"
       when Map then "{#{value.map { |k, v| "#{write(k, readably)} #{write(v, readably)}" }.join(', ')}}"
       when Set then "\#{#{write_all(value, readably)}}"

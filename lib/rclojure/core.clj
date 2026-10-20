@@ -33,6 +33,11 @@
 ;; Private vars aren't supported yet; defn- is an alias for defn.
 (defmacro defn- [name & decl] `(defn ~name ~@decl))
 
+;;; Lazy seqs
+
+(defmacro lazy-seq [& body]
+  `(RClojure::LazySeq/new (fn* [] ~@body)))
+
 ;;; Basic functions
 
 (defn identity [x] x)

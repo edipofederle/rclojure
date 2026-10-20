@@ -9,7 +9,7 @@ A Clojure dialect hosted on Ruby.
 - [x] Milestone 2 — analyzer + evaluator with special forms (`def`, `if`, `do`, `let*`, `fn*`, `quote`, `var`, `loop*`/`recur`, `try`/`catch`/`finally`, `throw`)
 - [x] Milestone 3 — core primitives in Ruby (collections, numbers, strings/printing, atoms, `apply`/`reduce`/`eval`)
 - [x] Milestone 4 — macros, syntax-quote, destructuring, `core.clj` bootstrap (`defn`, `let`, `cond`, `->`, `doseq`, `case`, ...)
-- [ ] Milestone 5 — seqs, laziness, persistent collections
+- [ ] Milestone 5 — seqs, laziness, persistent collections (*partial*: seq abstraction, `lazy-seq`, linked lists)
 - [ ] Milestone 6 — Ruby interop (*partial*: method calls, class methods, constants)
 - [ ] Milestone 7 — namespaces
 - [ ] Milestone 8 — compile to Ruby
@@ -43,14 +43,19 @@ introduced, and remove it when the gap is closed.
 - Ruby interop is minimal — M6:
   - no way to pass a block (`(.map arr f)` can't hand `f` to a Ruby block)
   - no automatic conversion between rclojure collections and Ruby `Array`/`Hash` (Ruby arrays/hashes do work with seq functions, but print in Ruby format)
+  - other Ruby `Enumerable`s (`Range`, `Enumerator`) aren't seqable, unlike Clojure's support for any `Iterable`
   - no constructor shorthands `(Foo. x)`/`(new Foo x)` (use `(Foo/new x)`), no `..`, `doto` or `set!`
   - no type hints or `instance?`
 - `catch` takes a bare Ruby exception class name (looked up at top level, then in `RClojure`) or `:default`; no `Throwable`
 - Deep non-tail recursion is limited by the Ruby stack
 
 **Data**
-- Collections copy on every update (O(n)), no structural sharing — M5
-- No lazy seqs; seq functions (including `core.clj` ones like `reverse`, `interpose`, `concat`) are eager, and `map`/`filter`/`range`/`take` don't exist yet — M5
+- Vectors, maps and sets copy on every update (O(n)), no structural sharing — M5 (lists are linked, with O(1) `cons`/`rest`)
+- `lazy-seq` exists, but the seq library is still eager (`concat`, `interpose`, ...) and `map`/`filter`/`range`/`take`/`doall` don't exist yet — M5
+- Lazy seqs are never chunked, so side effects happen one item at a time rather than 32 at a time as with Clojure's chunked seqs
+- `apply` realizes its whole argument seq, so it can't take an infinite seq
+- Lazy seq realization isn't synchronized, so sharing an unrealized seq between Ruby threads can run its body twice
+- `str` of a lazy seq gives its contents, not Clojure's `clojure.lang.LazySeq@<hash>`
 - Strings are not seqable (`(first "abc")` errors) — needs a character type
 - Map entries are plain two-element vectors
 - `<`/`>` use Ruby semantics, so they also compare strings instead of erroring; `compare` doesn't support collections
@@ -83,6 +88,7 @@ bundle exec rake  # run tests
 | keywords `:foo` | `Symbol` |
 | symbols `foo` | `RClojure::Symbol` |
 | `()` `[]` `{}` `#{}` | `RClojure::List` / `Vector` / `Map` / `Set` |
+| other seqs | `RClojure::Cons` / `LazySeq` / `ArraySeq` (all include `RClojure::ISeq`) |
 | functions | `RClojure::Fn` (rclojure) / `RClojure::Builtin` (Ruby); anything with `#call` is invocable |
 | exceptions | Ruby exceptions; `ex-info` creates `RClojure::ExceptionInfo` |
 
@@ -108,6 +114,12 @@ The analyzer expands macros and syntax-quote, resolves symbols to locals or
 Vars, validates special forms and rejects `recur` outside tail position.
 Nodes are evaluated directly for now; milestone 8 will compile them to Ruby
 instead.
+
+Seqs follow Clojure's model: anything `Seqable` has `#seq`, returning an
+`ISeq` (`first`/`rest`/`next`) or nil. `List` is a counted linked list;
+`seq` on vectors, sets, maps and Ruby collections gives an `ArraySeq`;
+`cons` builds a `Cons`; `lazy-seq` builds a `LazySeq`. Code forms are any
+`ISeq`, so macros may return conses or lazy seqs.
 
 Ruby primitives live in `lib/rclojure/core/`, grouped as `numbers`,
 `collections`, `text` (strings, symbols, keywords, printing) and `lang`

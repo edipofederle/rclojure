@@ -1,6 +1,7 @@
 require_relative "rclojure/version"
 require_relative "rclojure/errors"
 require_relative "rclojure/types"
+require_relative "rclojure/seqs"
 require_relative "rclojure/reader"
 require_relative "rclojure/printer"
 require_relative "rclojure/host"

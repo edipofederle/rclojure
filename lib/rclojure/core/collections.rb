@@ -1,12 +1,15 @@
 module RClojure
   module Core
     module Collections
+      # Marks a missing value where nil is a valid one.
+      NONE = Object.new.freeze
+
       module_function
 
       def install(ns)
         define = ->(name, impl) { Core.define(ns, name, impl) }
 
-        define.("list", ->(*items) { List.new(items) })
+        define.("list", ->(*items) { List.from(items) })
         define.("vector", ->(*items) { Vector.new(items) })
         define.("hash-set", ->(*items) { Set.new(items) })
         define.("hash-map", lambda { |*kvs|
@@ -18,14 +21,12 @@ module RClojure
         define.("set", ->(coll) { Set.new(RClojure.items(coll)) })
 
         define.("seq", ->(coll) { RClojure.seq(coll) })
-        define.("first", ->(coll) { RClojure.items(coll).first })
-        define.("rest", ->(coll) { List.new(RClojure.items(coll).drop(1)) })
-        define.("next", lambda { |coll|
-          items = RClojure.items(coll)
-          items.size > 1 ? List.new(items.drop(1)) : nil
-        })
-        define.("cons", ->(item, coll) { List.new([item, *RClojure.items(coll)]) })
-        define.("concat", ->(*colls) { List.new(colls.flat_map { |coll| RClojure.items(coll) }) })
+        define.("first", ->(coll) { RClojure.first(coll) })
+        define.("rest", ->(coll) { RClojure.rest(coll) })
+        define.("next", ->(coll) { RClojure.next(coll) })
+        define.("cons", ->(item, coll) { RClojure.cons(item, coll) })
+        define.("concat", ->(*colls) { List.from(colls.flat_map { |coll| RClojure.items(coll) }) })
+        define.("realized?", ->(x) { x.realized? })
         define.("conj", lambda { |*args|
           return Vector[] if args.empty?
 
@@ -33,7 +34,7 @@ module RClojure
           items.reduce(coll) { |acc, item| conj(acc, item) }
         })
         define.("count", ->(coll) { count(coll) })
-        define.("empty?", ->(coll) { coll.is_a?(::String) ? coll.empty? : RClojure.items(coll).empty? })
+        define.("empty?", ->(coll) { coll.is_a?(::String) ? coll.empty? : RClojure.seq(coll).nil? })
         define.("nth", ->(coll, index, *not_found) { nth(coll, index, not_found) })
         define.("peek", ->(coll) { coll&.peek })
         define.("pop", ->(coll) { coll&.pop })
@@ -49,27 +50,20 @@ module RClojure
         })
         define.("dissoc", ->(map, *keys) { map && keys.reduce(map) { |acc, key| acc.dissoc(key) } })
         define.("disj", ->(set, *items) { set && items.reduce(set) { |acc, item| acc.disj(item) } })
-        define.("keys", ->(map) { map && RClojure.seq(List.new(map.keys)) })
-        define.("vals", ->(map) { map && RClojure.seq(List.new(map.values)) })
+        define.("keys", ->(map) { map && RClojure.seq(map.keys) })
+        define.("vals", ->(map) { map && RClojure.seq(map.values) })
         define.("key", ->(entry) { entry[0] })
         define.("val", ->(entry) { entry[1] })
 
         define.("reduce", lambda { |fn, *args|
           raise ArityError, "Wrong number of args (#{args.size + 1}) passed to: clojure.core/reduce" unless args.size.between?(1, 2)
 
-          items = RClojure.items(args.last)
-          if args.size == 2
-            items.reduce(args.first) { |acc, item| RClojure.invoke(fn, [acc, item]) }
-          elsif items.empty?
-            RClojure.invoke(fn, [])
-          else
-            items.drop(1).reduce(items.first) { |acc, item| RClojure.invoke(fn, [acc, item]) }
-          end
+          reduce(fn, args)
         })
 
         define.("coll?", ->(x) { x.is_a?(Sequential) || x.is_a?(Map) || x.is_a?(Set) })
         define.("sequential?", ->(x) { x.is_a?(Sequential) })
-        define.("seq?", ->(x) { x.is_a?(List) })
+        define.("seq?", ->(x) { x.is_a?(ISeq) })
         define.("list?", ->(x) { x.is_a?(List) })
         define.("vector?", ->(x) { x.is_a?(Vector) })
         define.("map?", ->(x) { x.is_a?(Map) })
@@ -81,6 +75,7 @@ module RClojure
         when nil then List[item]
         when Map then conj_map(coll, item)
         when List, Vector, Set then coll.conj(item)
+        when ISeq then Cons.new(item, coll)
         else raise Error, "Don't know how to conj onto: #{coll.class.name}"
         end
       end
@@ -106,16 +101,39 @@ module RClojure
         end
       end
 
-      def nth(coll, index, not_found)
-        if coll.is_a?(Sequential) && index.is_a?(Integer) && index.between?(0, coll.size - 1)
-          coll.to_a[index]
-        elsif !not_found.empty?
-          not_found.first
-        elsif coll.nil?
-          nil
-        else
-          raise IndexError, "Index #{index} out of bounds"
+      def reduce(fn, args)
+        acc, coll = args.size == 2 ? args : [NONE, args.first]
+        RClojure.each_item(coll) do |item|
+          acc = acc.equal?(NONE) ? item : RClojure.invoke(fn, [acc, item])
         end
+        acc.equal?(NONE) ? RClojure.invoke(fn, []) : acc
+      end
+
+      def nth(coll, index, not_found)
+        found = case coll
+                when nil then NONE
+                when Vector, Array then index.is_a?(Integer) && index.between?(0, coll.size - 1) ? coll[index] : NONE
+                when ISeq then nth_of_seq(coll, index)
+                else raise Error, "nth not supported on this type: #{coll.class.name}"
+                end
+        return found unless found.equal?(NONE)
+        return not_found.first unless not_found.empty?
+        return nil if coll.nil?
+
+        raise IndexError, "Index #{index} out of bounds"
+      end
+
+      # Walks only as far as index, so it works on infinite seqs.
+      def nth_of_seq(seq, index)
+        return NONE if index.negative?
+
+        s = seq.seq
+        index.times do
+          return NONE if s.nil?
+
+          s = s.next
+        end
+        s ? s.first : NONE
       end
 
       def contains?(coll, key)
