@@ -9,7 +9,7 @@ A Clojure dialect hosted on Ruby.
 - [x] Milestone 2 — analyzer + evaluator with special forms (`def`, `if`, `do`, `let*`, `fn*`, `quote`, `var`, `loop*`/`recur`, `try`/`catch`/`finally`, `throw`)
 - [x] Milestone 3 — core primitives in Ruby (collections, numbers, strings/printing, atoms, `apply`/`reduce`/`eval`)
 - [x] Milestone 4 — macros, syntax-quote, destructuring, `core.clj` bootstrap (`defn`, `let`, `cond`, `->`, `doseq`, `case`, ...)
-- [ ] Milestone 5 — seqs, laziness, persistent collections (*partial*: seq abstraction, `lazy-seq`, lazy seq library and `for`, linked lists; persistent vectors/maps/sets to do)
+- [x] Milestone 5 — seqs, laziness, persistent collections (seq abstraction, `lazy-seq`, lazy seq library and `for`, persistent lists, vectors, maps and sets)
 - [x] Milestone 6 — Ruby interop (method calls, constants, constructors, blocks, attributes and `set!`, `..`/`doto`, `instance?`, `clj->rb`/`rb->clj`, seqable Enumerables)
 - [x] Milestone 7 — namespaces (`ns`, `require`/`use`/`load`, aliases, `refer` filters, private vars, `::kw`, `ns-*` introspection)
 - [ ] Milestone 8 — compile to Ruby
@@ -51,7 +51,8 @@ introduced, and remove it when the gap is closed.
 - Deep non-tail recursion is limited by the Ruby stack
 
 **Data**
-- Vectors, maps and sets copy on every update (O(n)), no structural sharing — M5 (lists are linked, with O(1) `cons`/`rest`)
+- No transients (`transient`, `persistent!`, `conj!`, ...), sorted collections (`sorted-map`, `sorted-set`) or `subvec`
+- Maps with more than 8 entries iterate in hash order, like Clojure's hash maps, but Ruby seeds `String` and `Symbol` hashes per process, so that order (and how such maps print) can change between runs
 - No transducers: `map`, `filter`, `take`, ... have no transducer arity, and there is no `reduced`, `transduce`, `sequence` or `eduction`
 - Lazy seqs are never chunked, so side effects happen one item at a time rather than 32 at a time as with Clojure's chunked seqs
 - `apply` realizes its whole argument seq, so it can't take an infinite seq
@@ -155,9 +156,17 @@ instead.
 
 Seqs follow Clojure's model: anything `Seqable` has `#seq`, returning an
 `ISeq` (`first`/`rest`/`next`) or nil. `List` is a counted linked list;
-`seq` on vectors, sets, maps and Ruby collections gives an `ArraySeq`;
+`seq` on a vector walks its trie leaves (`VectorSeq`), and on sets, maps
+and Ruby collections gives an `ArraySeq`;
 `cons` builds a `Cons`; `lazy-seq` builds a `LazySeq`. Code forms are any
 `ISeq`, so macros may return conses or lazy seqs.
+
+Collections are persistent, ported from Clojure (`lib/rclojure/collections/`):
+vectors are a 32-way trie plus a tail, like `PersistentVector`; maps of up
+to 8 entries are frozen Ruby Hashes copied on write (like
+`PersistentArrayMap`, keeping insertion order), and larger ones a hash
+array mapped trie (like `PersistentHashMap`); sets wrap a map. Keys are
+compared like Ruby Hash keys, with `hash` and `eql?`.
 
 Ruby primitives live in `lib/rclojure/core/`, grouped as `numbers`,
 `collections`, `text` (strings, symbols, keywords, printing) and `lang`
