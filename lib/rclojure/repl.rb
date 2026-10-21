@@ -13,21 +13,41 @@ module RClojure
       buffer = +""
       while (line = Reline.readline(buffer.empty? ? prompt : CONTINUATION_PROMPT, true))
         buffer << line << "\n"
-        begin
-          forms = Reader.read_all(buffer)
-        rescue EOFError
-          next # incomplete form: keep reading lines
-        rescue ReaderError => e
-          warn REPL.describe_error(e)
-          forms = []
-        end
+        next unless complete?(buffer)
+
+        eval_all(buffer)
         buffer = +""
-        forms.each { |form| break unless eval_and_print(form) }
       end
       puts
     end
 
     private
+
+    # Whether source holds only whole forms (a reader error counts: it is
+    # reported when the forms are evaluated).
+    def complete?(source)
+      Reader.read_all(source, ns_resolver: ->(_alias) { "user" })
+      true
+    rescue EOFError
+      false
+    rescue ReaderError
+      true
+    end
+
+    # Reads and evaluates one form at a time, as `::kw` and the prompt
+    # depend on the namespace earlier forms switch to. Stops at an error.
+    def eval_all(source)
+      reader = @runtime.new_reader(source)
+      loop do
+        reader.skip_whitespace
+        break if reader.eof?
+
+        form = reader.read
+        break unless eval_and_print(form)
+      end
+    rescue ReaderError => e
+      warn REPL.describe_error(e)
+    end
 
     def prompt
       "#{@runtime.current_ns.name}=> "

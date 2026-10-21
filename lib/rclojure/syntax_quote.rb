@@ -64,7 +64,13 @@ module RClojure
     end
 
     def qualify(symbol)
-      return symbol if symbol.ns
+      # Like Clojure's resolveSymbol: dotted names (class or ns names) stay as-is.
+      return symbol if symbol.name.index(".")&.positive?
+      if symbol.ns
+        # an alias is expanded to the full namespace name, as in Clojure
+        aliased = @runtime.current_ns.lookup_alias(symbol.ns)
+        return aliased ? Symbol.new(aliased.name, symbol.name) : symbol
+      end
       return symbol if UNQUALIFIED.include?(symbol.name)
       # Ruby interop forms (.method, Class.) are left alone.
       return symbol if symbol.name.start_with?(".") || symbol.name.end_with?(".")

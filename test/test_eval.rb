@@ -61,7 +61,8 @@ class TestEval < Minitest::Test
   end
 
   def test_def_shadows_core
-    assert_ev 42, "(def + (fn* [a b] 42)) (+ 1 2)"
+    _, err = capture_io { assert_ev 42, "(def + (fn* [a b] 42)) (+ 1 2)" }
+    assert_match "WARNING: + already refers to: #'clojure.core/+ in namespace: user, being replaced by: #'user/+", err
     assert_ev 3, "(clojure.core/+ 1 2)"
   end
 

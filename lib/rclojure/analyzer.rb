@@ -4,6 +4,7 @@ module RClojure
     SPECIAL_FORMS = %w[def if do let* loop* recur fn* quote var throw try . new set!].freeze
     DOT = Symbol.new(nil, ".")
     NEW = Symbol.new(nil, "new")
+    DO = Symbol.new(nil, "do")
     SYNTAX_QUOTE = Symbol.new(nil, "syntax-quote")
     AMPERSAND = Symbol.new(nil, "&")
     CATCH = Symbol.new(nil, "catch")
@@ -56,6 +57,15 @@ module RClojure
       expand_host_shorthand(form, scope) || form
     end
 
+    # Clojure's ns-resolve: the var or Ruby constant symbol names in ns, or nil.
+    def resolve_in(ns, symbol)
+      var = lookup_var(symbol, ns)
+      return var if var
+
+      constant = host_constant(symbol, ns)
+      constant.equal?(Host::NOT_FOUND) ? nil : constant
+    end
+
     def macroexpand(form, scope = Scope::EMPTY)
       loop do
         expanded = macroexpand_1(form, scope)
@@ -78,21 +88,27 @@ module RClojure
 
       var = lookup_var(symbol)
       if var
+        check_public(var)
         raise CompilerError, "Can't take value of a macro: #{var}" if var.macro?
 
         return Nodes::VarRef.new(var)
       end
 
       constant = host_constant(symbol)
-      raise CompilerError, "Unable to resolve symbol: #{symbol} in this context" if constant.equal?(Host::NOT_FOUND)
+      if constant.equal?(Host::NOT_FOUND)
+        raise CompilerError, "No such var: #{symbol}" if symbol.ns && @runtime.resolve_namespace(symbol.ns)
+
+        raise CompilerError, "Unable to resolve symbol: #{symbol} in this context"
+      end
 
       Nodes::Const.new(constant)
     end
 
     # `String`, `File::Stat` => the Ruby constant; `Math/PI` => Math::PI.
-    def host_constant(symbol)
+    # Namespaces and aliases win over Ruby modules of the same name.
+    def host_constant(symbol, ns = @runtime.current_ns)
       return Host.constant(symbol.name) unless symbol.ns
-      return Host::NOT_FOUND if @runtime.find_namespace(symbol.ns) || !Host.module?(symbol.ns)
+      return Host::NOT_FOUND if namespace_for(symbol, ns) || !Host.module?(symbol.ns)
 
       Host.constant("#{symbol.ns}::#{symbol.name}")
     end
@@ -112,7 +128,7 @@ module RClojure
         List[DOT, args.first, Symbol.new(nil, head.name[1..]), *args.drop(1)]
       elsif head.ns.nil? && head.name.end_with?(".") && head.name.size > 1 && !scope.locals.key?(head.name)
         List[NEW, Symbol.new(nil, head.name.chomp(".")), *args]
-      elsif head.ns && @runtime.find_namespace(head.ns).nil? && Host.module?(head.ns)
+      elsif head.ns && namespace_for(head).nil? && Host.module?(head.ns)
         List[DOT, Symbol.new(nil, head.ns), Symbol.new(nil, head.name), *args]
       end
     end
@@ -121,12 +137,24 @@ module RClojure
       lookup_var(symbol) or raise CompilerError, "Unable to resolve symbol: #{symbol} in this context"
     end
 
-    def lookup_var(symbol)
+    # Like Clojure's lookupVar: a qualified symbol names a var interned in
+    # that namespace (or alias); an unqualified one, any mapping in ns.
+    def lookup_var(symbol, ns = @runtime.current_ns)
       if symbol.ns
-        @runtime.find_namespace(symbol.ns)&.own_var(symbol.name)
+        namespace_for(symbol, ns)&.own_var(symbol.name)
       else
-        @runtime.current_ns.find_var(symbol.name)
+        ns.find_var(symbol.name)
       end
+    end
+
+    def namespace_for(symbol, ns = @runtime.current_ns)
+      ns.lookup_alias(symbol.ns) || @runtime.find_namespace(symbol.ns)
+    end
+
+    def check_public(var)
+      return unless var.private? && !var.ns.equal?(@runtime.current_ns)
+
+      raise CompilerError, "var: #{var} is not public"
     end
 
     # The macro Var named by head, unless head is a special form or a
@@ -136,7 +164,10 @@ module RClojure
       return nil if head.ns.nil? && (SPECIAL_FORMS.include?(head.name) || scope.locals.key?(head.name))
 
       var = lookup_var(head)
-      var if var&.macro?
+      return nil unless var&.macro?
+
+      check_public(var)
+      var
     end
 
     # Macros are fns taking the whole form and the local environment

@@ -28,13 +28,14 @@ source ──Reader──▶ forms ──Analyzer (macroexpand)──▶ Nodes �
 - **Reader** (`reader.rb`) produces forms made of the Ruby value mapping in the README (keywords are Ruby `Symbol`s, Clojure symbols are `RClojure::Symbol`, collections are `RClojure::List/Vector/Map/Set` in `types.rb`; `List.from(array)` builds a list). Syntax-quote is *not* expanded by the reader: it emits `(syntax-quote x)`, which the analyzer expands via `SyntaxQuote` (`syntax_quote.rb`).
 - **Analyzer** (`analyzer.rb`) is the compile step: it macroexpands (macros, syntax-quote, and interop shorthands like `(.foo x)` / `(Math/sqrt x)` → the `.` special form), resolves symbols to `LocalBinding`s or `Var`s at analysis time, validates special forms (`SPECIAL_FORMS`), and rejects `recur` outside tail position. A `Scope` struct carries visible locals and the current recur arity.
 - **Nodes** (`nodes.rb`) are Structs with `#eval(env)`. `Env` is a frame chain keyed by `LocalBinding` identity (not names), so shadowing is resolved by the analyzer. `recur` *returns* a `Nodes::Recur` value (it is not raised); `Loop` and `Fn#call` loop on it, creating a fresh frame per iteration so closures keep captured values. Milestone 8 plans to compile Nodes to Ruby instead of evaluating them.
-- **Runtime** (`runtime.rb`) owns namespaces. Each `Runtime.new` installs Ruby primitives into `clojure.core`, then evaluates `core.clj` from source (~90ms — this dominates test time), then switches to a `user` namespace that refers core. Runtimes are fully independent; tests create one per test in `setup`.
+- **Runtime** (`runtime.rb`) owns namespaces. Each `Runtime.new` installs Ruby primitives into `clojure.core`, then evaluates `core.clj` from source (~125ms — this dominates test time), then switches to a `user` namespace that refers core. `Runtime#eval` unrolls a top-level `do` (like Clojure's `Compiler.eval`) so `ns`/`in-ns` take effect before later subforms are analyzed. Runtimes are fully independent; tests create one per test in `setup`.
 - **Interop** (`analyzer.rb` `analyze_dot`/`analyze_new`/`analyze_set!`, `host.rb`): shorthands `(.m x)`, `(.-attr x)`, `(Foo. x)`, `(Foo/m x)` macroexpand to the `.`/`new` special forms, after macros (as in Clojure, so `..` is a macro). `& f` at the end of a host call's args passes `f` as the Ruby block via `Host.block`; `set!` compiles host attribute targets into a call to the `attr=` setter.
+- **Namespaces** follow Clojure's model: a `Namespace` has `mappings` (name → Var, its own and referred ones, copied at `refer` time) and `aliases`; `clojure.core/*ns*` holds the current one (a plain var: `in-ns` sets its root, `Runtime#load_file` restores it). Primitives operating on namespaces are in `core/namespaces.rb`; `ns`, `require`, `use` and `load` are ported to `core.clj`. `require` searches `Runtime#load_path` (`RCLOJURE_PATH`). The reader resolves `::kw` through a callback into the runtime, so read and eval one form at a time (`Runtime#eval_string`, the REPL) rather than reading a whole buffer up front.
 - **Invocation**: anything responding to `#call` is a function (`RClojure.invoke` in `core.rb`); keywords look themselves up. `Fn` (`fn.rb`) is an rclojure closure with arity dispatch; `Builtin` wraps a Ruby lambda.
 
 ### Where to add language features
 
-- Ruby primitives go in `lib/rclojure/core/{numbers,collections,text,lang,interop}.rb`, registered with `define.("name", ->(...) { ... })` inside each module's `install`. Shared helpers (`RClojure.items`, `seq`, `equiv?`, `truthy?`, `get`) live in `core.rb`.
+- Ruby primitives go in `lib/rclojure/core/{numbers,collections,text,lang,interop,namespaces}.rb`, registered with `define.("name", ->(...) { ... })` inside each module's `install`. Shared helpers (`RClojure.items`, `seq`, `equiv?`, `truthy?`, `get`) live in `core.rb`.
 - Anything expressible in rclojure goes in `lib/rclojure/core.clj`. **Order matters there**: it bootstraps `defmacro` from `fn*`, and `fn`/`let`/`loop` are plain-symbol versions until `destructure` is defined, after which they're redefined with destructuring.
 - Macros are flagged via the non-standard `set-macro!` builtin (no metadata support yet); macro fns take implicit `&form` and `&env` first.
 - `=` must use `RClojure.equiv?` semantics: integers/ratios never equal floats, recursively in collections.
@@ -43,7 +44,7 @@ source ──Reader──▶ forms ──Analyzer (macroexpand)──▶ Nodes �
 
 ## Tests
 
-`test/test_helper.rb` provides `EvalTestHelpers` (`ev(source)`, `assert_ev(expected, source)` against a fresh Runtime) and `RClojureTestHelpers` (`read`, `sym`). Test files are grouped by layer: reader, printer, eval (special forms), core, macros, interop.
+`test/test_helper.rb` provides `EvalTestHelpers` (`ev(source)`, `assert_ev(expected, source)` against a fresh Runtime) and `RClojureTestHelpers` (`read`, `sym`). Test files are grouped by layer: reader, printer, eval (special forms), core, macros, seqs, interop, namespaces. `test_namespaces.rb` gives each test a Runtime whose load path is a temp dir, and writes lib files into it.
 
 ## Conventions
 

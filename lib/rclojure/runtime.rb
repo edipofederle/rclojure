@@ -3,24 +3,61 @@ module RClojure
   class Runtime
     CORE_SOURCE = File.expand_path("core.clj", __dir__)
 
-    attr_reader :current_ns, :analyzer
+    # Directories `require` searches for libs, like Clojure's classpath:
+    # RCLOJURE_PATH (separated like PATH), else the current directory.
+    def self.default_load_path
+      ENV.fetch("RCLOJURE_PATH", Dir.pwd).split(File::PATH_SEPARATOR)
+    end
 
-    def initialize
+    attr_reader :analyzer, :load_path
+
+    def initialize(load_path: Runtime.default_load_path)
       @namespaces = {}
       @next_id = 0
       @analyzer = Analyzer.new(self)
+      @load_path = load_path
 
-      core = create_namespace("clojure.core")
+      core = find_or_create_namespace("clojure.core")
+      @ns_var = core.intern("*ns*").bind_root(core)
       Core.install(core, self)
-      @current_ns = core
       load_file(CORE_SOURCE)
 
-      @current_ns = create_namespace("user")
-      @current_ns.refer(core)
+      user = find_or_create_namespace("user")
+      core.publics.each_value { |var| user.refer(var.name, var) }
+      self.current_ns = user
+    end
+
+    # The value of clojure.core/*ns*. It isn't a dynamic var (rclojure has
+    # none yet): in-ns sets its root, and loading a file restores it.
+    def current_ns
+      @ns_var.deref
+    end
+
+    def current_ns=(namespace)
+      @ns_var.bind_root(namespace)
     end
 
     def find_namespace(name)
       @namespaces[name]
+    end
+
+    def find_or_create_namespace(name)
+      @namespaces[name] ||= Namespace.new(name)
+    end
+
+    def remove_namespace(name)
+      raise Error, "Cannot remove clojure namespace" if name == "clojure.core"
+
+      @namespaces.delete(name)
+    end
+
+    def namespaces
+      @namespaces.values
+    end
+
+    # An alias in the current namespace, else a namespace by full name.
+    def resolve_namespace(name)
+      current_ns.lookup_alias(name) || find_namespace(name)
     end
 
     # Unique ids for gensyms.
@@ -28,13 +65,21 @@ module RClojure
       @next_id += 1
     end
 
+    # Like Clojure's Compiler.eval, a top-level `do` evaluates its forms one
+    # by one, so a form can depend on an earlier one's effects (in-ns, defmacro).
     def eval(form)
+      form = @analyzer.macroexpand(form)
+      if form.is_a?(ISeq) && form.first == Analyzer::DO
+        return form.rest.reduce(nil) { |_, subform| eval(subform) }
+      end
+
       @analyzer.analyze(form).eval(Env.new)
     end
 
-    # Reads and evaluates each form in turn; returns the last value.
+    # Reads and evaluates each form in turn; returns the last value. Forms
+    # are read one at a time, so `::kw` resolves in the ns set by earlier forms.
     def eval_string(source)
-      reader = Reader.new(source)
+      reader = new_reader(source)
       result = nil
       loop do
         reader.skip_whitespace
@@ -45,14 +90,34 @@ module RClojure
       result
     end
 
-    def load_file(path)
-      eval_string(File.read(path))
+    def new_reader(source)
+      Reader.new(source, ns_resolver: method(:auto_resolve_namespace))
     end
 
-    private
+    # Evaluates a file, restoring *ns* afterwards, as Clojure's load binds it.
+    def load_file(path)
+      previous = current_ns
+      begin
+        eval_string(File.read(path))
+      ensure
+        self.current_ns = previous
+      end
+    end
 
-    def create_namespace(name)
-      @namespaces[name] = Namespace.new(name)
+    # Loads resource ("foo/bar_baz") from the first load path directory
+    # that has resource.clj.
+    def load_resource(resource)
+      file = @load_path.map { |dir| File.join(dir, "#{resource}.clj") }.find { |path| File.file?(path) }
+      raise Error, "Could not locate #{resource}.clj on load path: #{@load_path.join(File::PATH_SEPARATOR)}" unless file
+
+      load_file(file)
+    end
+
+    # For the reader: `::kw` uses the current namespace, `::a/kw` an alias.
+    def auto_resolve_namespace(alias_name)
+      return current_ns.name unless alias_name
+
+      current_ns.lookup_alias(alias_name)&.name
     end
   end
 end

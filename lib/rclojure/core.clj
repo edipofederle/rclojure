@@ -30,8 +30,12 @@
         decl (if (map? (first decl)) (next decl) decl)]
     `(def ~name (fn ~@decl))))
 
-;; Private vars aren't supported yet; defn- is an alias for defn.
-(defmacro defn- [name & decl] `(defn ~name ~@decl))
+;; Marks the var private with the non-standard Var#private!, since there's
+;; no metadata (^:private) yet.
+(defmacro defn- [name & decl]
+  `(do (defn ~name ~@decl)
+       (.private! (var ~name))
+       (var ~name)))
 
 ;;; Lazy seqs
 
@@ -729,3 +733,139 @@
   (if ks
     (assoc m k (apply update-in (get m k) ks f args))
     (assoc m k (apply f (get m k) args))))
+
+;;; Namespaces and libs
+;;
+;; Ported from Clojure's core.clj. Libs are found on the Runtime's load
+;; path. *loaded-libs* and *pending-paths* are atoms, since rclojure has no
+;; refs or dynamic vars; :verbose is accepted but ignored, and :reload-all
+;; reloads only the named lib, like :reload.
+
+;; clojure.core counts as loaded: it isn't on the load path to be found.
+(def *loaded-libs* (atom #{'clojure.core}))
+(.private! (var *loaded-libs*))
+(def *pending-paths* (atom ()))
+(.private! (var *pending-paths*))
+
+(defn loaded-libs [] @*loaded-libs*)
+
+(defmacro refer-clojure [& filters]
+  `(clojure.core/refer '~'clojure.core ~@filters))
+
+(defmacro ns [name & references]
+  (let [process-reference (fn [[kname & args]]
+                            `(~(symbol "clojure.core" (clojure.core/name kname))
+                              ~@(map (fn [arg] (list 'quote arg)) args)))
+        references (if (string? (first references)) (next references) references)
+        references (if (map? (first references)) (next references) references)
+        references (remove (fn [r] (= :gen-class (first r))) references)]
+    `(do
+       (clojure.core/in-ns '~name)
+       ~@(when (and (not= name 'clojure.core)
+                    (not-any? (fn [r] (= :refer-clojure (first r))) references))
+           `((clojure.core/refer '~'clojure.core)))
+       ~@(map process-reference references)
+       (if (= '~name 'clojure.core)
+         nil
+         (do (swap! (deref (var *loaded-libs*)) conj '~name) nil)))))
+
+(defn- throw-if [pred & message]
+  (when pred
+    (throw (ex-info (apply str message) {}))))
+
+(defn- libspec? [x]
+  (or (symbol? x)
+      (and (vector? x)
+           (or (nil? (second x))
+               (keyword? (second x))))))
+
+(defn- prependss [x coll]
+  (if (symbol? x) (cons x coll) (concat x coll)))
+
+(defn- root-resource [lib]
+  (str "/" (-> (name lib) (.tr "-" "_") (.tr "." "/"))))
+
+(defn- root-directory [lib]
+  (let [d (root-resource lib)]
+    (subs d 0 (.rindex d "/"))))
+
+(defn- check-cyclic-dependency [path]
+  (when (some #{path} (rest @*pending-paths*))
+    (let [pending (map (fn [p] (if (= p path) (str "[ " p " ]") p))
+                       (cons path @*pending-paths*))
+          chain (apply str (interpose "->" pending))]
+      (throw-if true "Cyclic load dependency: " chain))))
+
+(defn load [& paths]
+  (doseq [path paths]
+    (let [path (if (.start-with? path "/")
+                 path
+                 (str (root-directory (ns-name *ns*)) "/" path))]
+      (check-cyclic-dependency path)
+      (when-not (= path (first @*pending-paths*))
+        (swap! *pending-paths* conj path)
+        (try
+          (load-resource (subs path 1))
+          (finally (swap! *pending-paths* rest)))))))
+
+(defn- load-one [lib need-ns require]
+  (load (root-resource lib))
+  (throw-if (and need-ns (not (find-ns lib)))
+            "namespace '" lib "' not found after loading '" (root-resource lib) "'")
+  (when require
+    (swap! *loaded-libs* conj lib)))
+
+(defn- load-lib [prefix lib & options]
+  (throw-if (and prefix (.include? (name lib) "."))
+            "Found lib name '" (name lib) "' containing period with prefix '" prefix
+            "'.  lib names inside prefix lists must not contain periods")
+  (let [lib (if prefix (symbol (str prefix "." lib)) lib)
+        opts (apply hash-map options)
+        {:keys [as reload reload-all require use as-alias]} opts
+        loaded (contains? @*loaded-libs* lib)
+        need-ns (or as use)
+        load (cond reload-all load-one
+                   reload load-one
+                   (not loaded) (cond need-ns load-one
+                                      as-alias (fn [lib _need _require] (create-ns lib))
+                                      :else load-one))
+        filter-opts (select-keys opts [:exclude :only :rename :refer])
+        undefined-on-entry (not (find-ns lib))]
+    (if load
+      (try
+        (load lib need-ns require)
+        (catch :default e
+          (when undefined-on-entry
+            (remove-ns lib))
+          (throw e)))
+      (throw-if (and need-ns (not (find-ns lib)))
+                "namespace '" lib "' not found"))
+    (when as
+      (alias as lib))
+    (when as-alias
+      (alias as-alias lib))
+    (when (or use (:refer filter-opts))
+      (apply refer lib (mapcat seq filter-opts)))))
+
+(defn- load-libs [& args]
+  (let [flags (filter keyword? args)
+        opts (interleave flags (repeat true))
+        args (filter (complement keyword?) args)
+        supported #{:as :reload :reload-all :require :use :verbose :refer :as-alias}
+        unsupported (seq (remove supported flags))]
+    (throw-if unsupported
+              (apply str "Unsupported option(s) supplied: " (interpose "," unsupported)))
+    (throw-if (not (seq args)) "Nothing specified to load")
+    (doseq [arg args]
+      (if (libspec? arg)
+        (apply load-lib nil (prependss arg opts))
+        (let [[prefix & args] arg]
+          (throw-if (nil? prefix) "prefix cannot be nil")
+          (doseq [arg args]
+            (apply load-lib prefix (prependss arg opts))))))))
+
+(defn require [& args]
+  (apply load-libs :require args))
+
+(defn use [& args]
+  (apply load-libs :require :use args))

@@ -37,7 +37,7 @@ module RClojure
       when Vector then "[#{write_all(value, readably)}]"
       when Map then "{#{value.map { |k, v| "#{write(k, readably)} #{write(v, readably)}" }.join(', ')}}"
       when Set then "\#{#{write_all(value, readably)}}"
-      when Var then value.to_s
+      when Var, Namespace then value.to_s
       when Fn, Builtin then "#<fn #{value.name || 'anonymous'}>"
       when Atom then "#<Atom #{write(value.deref, readably)}>"
       when ExceptionInfo then "#<ExceptionInfo #{write(value.message, true)} #{write(value.data, true)}>"

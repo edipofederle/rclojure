@@ -23,16 +23,16 @@ module RClojure
     DISCARDED = Object.new.freeze
     private_constant :DISCARDED
 
-    def self.read_string(source)
-      reader = new(source)
+    def self.read_string(source, ns_resolver: nil)
+      reader = new(source, ns_resolver: ns_resolver)
       form = reader.read
       reader.skip_whitespace
       reader.error("Unexpected trailing input") unless reader.eof?
       form
     end
 
-    def self.read_all(source)
-      reader = new(source)
+    def self.read_all(source, ns_resolver: nil)
+      reader = new(source, ns_resolver: ns_resolver)
       forms = []
       loop do
         reader.skip_whitespace
@@ -43,8 +43,12 @@ module RClojure
       forms
     end
 
-    def initialize(source)
+    # ns_resolver resolves auto-resolved keywords: called with nil for
+    # `::kw` (the current namespace) or an alias name for `::alias/kw`,
+    # it returns a namespace name or nil. Without one, `::kw` is an error.
+    def initialize(source, ns_resolver: nil)
       @scanner = StringScanner.new(source)
+      @ns_resolver = ns_resolver
     end
 
     def eof?
@@ -171,11 +175,21 @@ module RClojure
       when INTEGER then Integer($2, 10) * ($1 == "-" ? -1 : 1)
       when RATIO then Rational(Integer($1, 10), Integer($2, 10))
       when FLOAT then Float(token.delete_suffix("M"))
-      when /\A::/ then error("Auto-resolved keywords are not supported yet")
+      when /\A::/ then read_auto_resolved_keyword(token)
       when /\A:(.+)\z/ then $1.to_sym
       when /\A[-+]?\d/ then error("Invalid number: #{token}")
       else Symbol.parse(token)
       end
+    end
+
+    # Like Clojure: `::kw` takes the current namespace, `::alias/kw` an alias's.
+    def read_auto_resolved_keyword(token)
+      error("Auto-resolved keywords need a namespace to resolve in") unless @ns_resolver
+      symbol = Symbol.parse(token[2..])
+      ns = !symbol.name.empty? && !token.end_with?("/") && @ns_resolver.call(symbol.ns)
+      error("Invalid token: #{token}") unless ns
+
+      :"#{ns}/#{symbol.name}"
     end
   end
 end

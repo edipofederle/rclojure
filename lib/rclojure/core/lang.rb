@@ -33,7 +33,7 @@ module RClojure
         define.("reset!", ->(atom, value) { atom.reset(value) })
         define.("swap!", ->(atom, fn, *args) { atom.swap(fn, args) })
 
-        define.("read-string", ->(source) { Reader.read_string(source) })
+        define.("read-string", ->(source) { Reader.read_string(source, ns_resolver: runtime.method(:auto_resolve_namespace)) })
         define.("eval", ->(form) { runtime.eval(form) })
 
         define.("set-macro!", ->(var) { var.macro! })

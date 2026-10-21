@@ -127,6 +127,7 @@ module RClojure
       Text.install(ns)
       Lang.install(ns, runtime)
       Interop.install(ns)
+      Namespaces.install(ns, runtime)
     end
 
     def define(ns, name, impl)
@@ -140,3 +141,4 @@ require_relative "core/collections"
 require_relative "core/text"
 require_relative "core/lang"
 require_relative "core/interop"
+require_relative "core/namespaces"

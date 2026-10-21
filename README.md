@@ -11,7 +11,7 @@ A Clojure dialect hosted on Ruby.
 - [x] Milestone 4 — macros, syntax-quote, destructuring, `core.clj` bootstrap (`defn`, `let`, `cond`, `->`, `doseq`, `case`, ...)
 - [ ] Milestone 5 — seqs, laziness, persistent collections (*partial*: seq abstraction, `lazy-seq`, lazy seq library and `for`, linked lists; persistent vectors/maps/sets to do)
 - [x] Milestone 6 — Ruby interop (method calls, constants, constructors, blocks, attributes and `set!`, `..`/`doto`, `instance?`, `clj->rb`/`rb->clj`, seqable Enumerables)
-- [ ] Milestone 7 — namespaces
+- [x] Milestone 7 — namespaces (`ns`, `require`/`use`/`load`, aliases, `refer` filters, private vars, `::kw`, `ns-*` introspection)
 - [ ] Milestone 8 — compile to Ruby
 
 ## TODO
@@ -27,18 +27,21 @@ introduced, and remove it when the gap is closed.
 **Reader**
 - No character literals (`\a`, `\newline`) — no character type yet
 - No metadata (`^{:doc ...}`, `^String`)
-- No `#()` anonymous functions, `#'x` var quote, `#"regex"`, `::auto-resolved` keywords or tagged literals (`#inst`)
+- No `#()` anonymous functions, `#'x` var quote, `#"regex"` or tagged literals (`#inst`)
 - Syntax-quote is expanded by the analyzer rather than the reader, so ``'`(a b)`` yields the raw `(syntax-quote (a b))` form instead of its expansion
 - Floats with an `M` suffix are read as `Float`, not `BigDecimal`
 
 **Language**
 - Missing macros/forms: `letfn`, `defonce`, `defmulti`/`defmethod`, protocols and records
-- `defn-` is an alias for `defn` (no private vars); `defn` skips attr-maps and ignores `{:pre :post}` conditions
+- `defn-` marks its var private with a non-standard `Var#private!` call (there is no `^:private` metadata); `defn` skips attr-maps and ignores `{:pre :post}` conditions
 - `case` is a linear chain of `=` tests (no constant-time dispatch or duplicate-constant check)
 - Macros are flagged with a non-standard `set-macro!` builtin instead of `:macro` metadata; `&env` maps symbols to internal `LocalBinding` objects
 - `def` discards docstrings; no metadata on vars or collections
 - No dynamic vars or `binding`
-- Single `user` namespace (plus `clojure.core`); no `ns`/`require` — M7
+- Namespaces:
+  - `*ns*` isn't a dynamic var: `in-ns` sets its root value, and loading a file restores it afterwards
+  - `ns` has no `:import` (Ruby constants are always reachable by name); namespace docstrings and attr-maps are ignored
+  - `require` only loads `.clj` files (no `.cljc`), `:reload-all` reloads just the named lib like `:reload`, and `:verbose` is ignored
 - Ruby interop:
   - Ruby collections print in Ruby format (`[1, 2]`, `{a: 1}`), and conversion is explicit (`clj->rb`/`rb->clj`); `clj->rb` turns sets into Arrays, like ClojureScript's `clj->js`
   - Ruby `Enumerable`s other than Array/Hash are seqable but not `count`able, as Java `Iterable`s aren't in Clojure (use `(count (seq x))`)
@@ -61,7 +64,7 @@ introduced, and remove it when the gap is closed.
 
 **Performance**
 - Tree-walking interpreter: a 1M-iteration `loop*` takes ~7s — M8, and see the YJIT TODO
-- Every `Runtime` evaluates `core.clj` from source at startup (~90ms), which also dominates the test suite's run time
+- Every `Runtime` evaluates `core.clj` from source at startup (~125ms), which also dominates the test suite's run time
 
 ## Usage
 
@@ -72,6 +75,20 @@ bundle install
 bin/rclj          # REPL
 bin/rclj file.clj # run a file
 bundle exec rake  # run tests
+```
+
+## Namespaces
+
+`require` finds `my-app.util` in `my_app/util.clj` under one of the
+directories on the load path: `RCLOJURE_PATH` (separated like `PATH`),
+or the current directory when unset.
+
+```clojure
+(ns my-app.core
+  (:require [my-app.util :as u :refer [shout]]))
+
+(defn- helper [] ::done) ; private; ::done is :my-app.core/done
+(u/whisper (shout "hi"))
 ```
 
 ## Value mapping
