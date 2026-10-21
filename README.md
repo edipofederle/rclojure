@@ -16,7 +16,7 @@ A Clojure dialect hosted on Ruby.
 
 ## TODO
 
-- [ ] Rebuild the local Ruby with YJIT (`sudo apt install rustc && rvm reinstall 3.4.8`, check with `ruby --yjit -v`) and benchmark the interpreter with `RUBY_YJIT_ENABLE=1`; a 1M-iteration `loop*` currently takes ~4.5s without it. CI's `yjit` job reports this benchmark with and without YJIT in its run summary
+- [x] Benchmark the interpreter with YJIT: CI's `yjit` job times a 1M-iteration `loop*` in its run summary (3.50s without YJIT, 1.90s with it, on GitHub's runners). To try it locally, rebuild Ruby with YJIT (`sudo apt install rustc && rvm reinstall 3.4.8`, check with `ruby --yjit -v`) and run with `RUBY_YJIT_ENABLE=1`
 
 ## Known limitations
 
@@ -63,7 +63,7 @@ introduced, and remove it when the gap is closed.
 - Floats print in Ruby format (`1.0e+20`, not `1.0E20`)
 
 **Performance**
-- Tree-walking interpreter: a 1M-iteration `loop*` takes ~7s — M8, and see the YJIT TODO
+- Tree-walking interpreter: a 1M-iteration `loop*` takes ~3.5s, ~1.9s with YJIT (`RUBY_YJIT_ENABLE=1`) — M8
 - Loading `core.clj` from source takes ~125ms, so its analyzed form is cached (see Usage) and later `Runtime`s start in ~15ms; the cache is per rclojure version, so checkouts sharing a cache directory replace each other's cache
 
 ## Usage
