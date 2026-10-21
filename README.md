@@ -16,7 +16,7 @@ A Clojure dialect hosted on Ruby.
 
 ## TODO
 
-- [x] Benchmark the interpreter with YJIT: CI's `yjit` job times a 1M-iteration `loop*` in its run summary (3.50s without YJIT, 1.90s with it, on GitHub's runners). To try it locally, rebuild Ruby with YJIT (`sudo apt install rustc && rvm reinstall 3.4.8`, check with `ruby --yjit -v`) and run with `RUBY_YJIT_ENABLE=1`
+- [x] Benchmark with YJIT: CI's `yjit` job times a 1M-iteration `loop*` in its run summary. On GitHub's runners it took 3.50s without YJIT and 1.90s with it under the tree-walking interpreter, and takes 0.27s and 0.13s compiled (M8). To try it locally, rebuild Ruby with YJIT (`sudo apt install rustc && rvm reinstall 3.4.8`, check with `ruby --yjit -v`) and run with `RUBY_YJIT_ENABLE=1`
 
 ## Known limitations
 
@@ -64,7 +64,7 @@ introduced, and remove it when the gap is closed.
 - Floats print in Ruby format (`1.0e+20`, not `1.0E20`)
 
 **Performance**
-- A 1M-iteration `loop*` takes ~0.5s on a dev machine without YJIT (the tree-walking interpreter M8 replaced took ~4.4s); CI's `yjit` job reports it with and without YJIT
+- A 1M-iteration `loop*` takes ~0.27s on CI, ~0.13s with YJIT (`RUBY_YJIT_ENABLE=1`); the tree-walking interpreter M8 replaced took 3.50s and 1.90s
 - Compiling uses `RubyVM::InstructionSequence`, so rclojure needs CRuby (not JRuby or TruffleRuby)
 - Ruby backtraces from rclojure code point into the generated Ruby (`(rclojure)`), not at rclojure source lines
 - Loading `core.clj` from source takes ~160ms, so its compiled form is cached (see Usage) and later `Runtime`s start in ~5ms; the cache is per rclojure version, so checkouts sharing a cache directory replace each other's cache
