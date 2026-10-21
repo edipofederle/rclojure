@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (Ruby ${{ matrix.ruby }}${{ matrix.uncached && ', no core cache' || '' }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ruby: ["3.3", "3.4"]
+        uncached: [false]
+        include:
+          # Loading core.clj from source, not just from the core cache.
+          - ruby: "3.4"
+            uncached: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: ${{ matrix.ruby }}
+          bundler-cache: true
+      - name: Run tests
+        run: bundle exec rake
+        env:
+          # An empty value turns the core cache off ('' is falsy, hence the order).
+          RCLOJURE_CACHE_DIR: ${{ !matrix.uncached && format('{0}/rclojure-cache', runner.temp) || '' }}
+      - name: Build gem
+        run: gem build rclojure.gemspec
+
+  yjit:
+    name: YJIT (tests and loop benchmark)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.4"
+          bundler-cache: true
+      - name: Check YJIT is available
+        run: ruby --yjit -e 'abort "YJIT not available" unless RubyVM::YJIT.enabled?; puts RUBY_DESCRIPTION'
+      - name: Run tests with YJIT
+        run: bundle exec rake
+        env:
+          RUBY_YJIT_ENABLE: "1"
+      - name: Benchmark a 1M-iteration loop*
+        run: |
+          bench='
+            require "benchmark"
+            runtime = RClojure::Runtime.new
+            seconds = Benchmark.realtime do
+              runtime.eval_string("(loop* [i 0] (if (< i 1000000) (recur (inc i)) i))")
+            end
+            puts format("%.2fs", seconds)
+          '
+          interpreted=$(ruby -Ilib -rrclojure -e "$bench")
+          yjit=$(ruby --yjit -Ilib -rrclojure -e "$bench")
+          {
+            echo "### 1M-iteration \`loop*\`"
+            echo "| Ruby | Time |"
+            echo "|---|---|"
+            echo "| without YJIT | $interpreted |"
+            echo "| with YJIT | $yjit |"
+          } | tee -a "$GITHUB_STEP_SUMMARY"

@@ -16,7 +16,7 @@ A Clojure dialect hosted on Ruby.
 
 ## TODO
 
-- [ ] Rebuild the local Ruby with YJIT (`sudo apt install rustc && rvm reinstall 3.4.8`, check with `ruby --yjit -v`) and benchmark the interpreter with `RUBY_YJIT_ENABLE=1`; a 1M-iteration `loop*` currently takes ~7s without it
+- [ ] Rebuild the local Ruby with YJIT (`sudo apt install rustc && rvm reinstall 3.4.8`, check with `ruby --yjit -v`) and benchmark the interpreter with `RUBY_YJIT_ENABLE=1`; a 1M-iteration `loop*` currently takes ~4.5s without it. CI's `yjit` job reports this benchmark with and without YJIT in its run summary
 
 ## Known limitations
 
