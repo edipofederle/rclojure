@@ -33,6 +33,15 @@ module RClojure
     def inspect
       "#<RClojure::Symbol #{self}>"
     end
+
+    # Marshal support (for the core cache) restores frozen values.
+    def marshal_dump
+      [@ns, @name]
+    end
+
+    def marshal_load((ns, name))
+      initialize(ns, name)
+    end
   end
 
   # Anything `seq` works on. Including classes define #seq, returning an
@@ -183,6 +192,14 @@ module RClojure
     def inspect
       "#<RClojure::List #{to_a.inspect}>"
     end
+
+    def marshal_dump
+      to_a
+    end
+
+    def marshal_load(items)
+      initialize(items.first, List.from(items.drop(1)), items.size)
+    end
   end
   List::EMPTY = List.new(nil, nil, 0)
 
@@ -269,6 +286,14 @@ module RClojure
     def inspect
       "#<RClojure::Vector #{@items.inspect}>"
     end
+
+    def marshal_dump
+      @items
+    end
+
+    def marshal_load(items)
+      initialize(items)
+    end
   end
 
   class Map
@@ -351,6 +376,14 @@ module RClojure
     def inspect
       "#<RClojure::Map #{@hash.inspect}>"
     end
+
+    def marshal_dump
+      @hash
+    end
+
+    def marshal_load(hash)
+      initialize(hash)
+    end
   end
 
   class Set
@@ -410,6 +443,14 @@ module RClojure
 
     def inspect
       "#<RClojure::Set #{@items.keys.inspect}>"
+    end
+
+    def marshal_dump
+      @items.keys
+    end
+
+    def marshal_load(items)
+      initialize(items)
     end
   end
 end

@@ -11,7 +11,8 @@ module RClojure
 
     attr_reader :analyzer, :load_path
 
-    def initialize(load_path: Runtime.default_load_path)
+    # cache_dir holds the CoreCache; nil turns caching off.
+    def initialize(load_path: Runtime.default_load_path, cache_dir: CoreCache.default_dir)
       @namespaces = {}
       @next_id = 0
       @analyzer = Analyzer.new(self)
@@ -20,7 +21,7 @@ module RClojure
       core = find_or_create_namespace("clojure.core")
       @ns_var = core.intern("*ns*").bind_root(core)
       Core.install(core, self)
-      load_file(CORE_SOURCE)
+      load_core(cache_dir && CoreCache.new(cache_dir))
 
       user = find_or_create_namespace("user")
       core.publics.each_value { |var| user.refer(var.name, var) }
@@ -73,7 +74,9 @@ module RClojure
         return form.rest.reduce(nil) { |_, subform| eval(subform) }
       end
 
-      @analyzer.analyze(form).eval(Env.new)
+      node = @analyzer.analyze(form)
+      @recorded_nodes&.push(node)
+      node.eval(Env.new)
     end
 
     # Reads and evaluates each form in turn; returns the last value. Forms
@@ -112,6 +115,21 @@ module RClojure
 
       load_file(file)
     end
+
+    # Evaluates core.clj's cached nodes if there are any, else loads it
+    # from source, recording its nodes for the cache.
+    def load_core(cache)
+      if (cached = cache&.load(self))
+        @next_id, nodes = cached
+        nodes.each { |node| node.eval(Env.new) }
+      else
+        @recorded_nodes = []
+        load_file(CORE_SOURCE)
+        cache&.store(@next_id, @recorded_nodes)
+        @recorded_nodes = nil
+      end
+    end
+    private :load_core
 
     # For the reader: `::kw` uses the current namespace, `::a/kw` an alias.
     def auto_resolve_namespace(alias_name)

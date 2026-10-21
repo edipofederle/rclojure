@@ -15,6 +15,7 @@ require_relative "rclojure/atom"
 require_relative "rclojure/analyzer"
 require_relative "rclojure/syntax_quote"
 require_relative "rclojure/core"
+require_relative "rclojure/core_cache"
 require_relative "rclojure/runtime"
 
 module RClojure

@@ -64,7 +64,7 @@ introduced, and remove it when the gap is closed.
 
 **Performance**
 - Tree-walking interpreter: a 1M-iteration `loop*` takes ~7s — M8, and see the YJIT TODO
-- Every `Runtime` evaluates `core.clj` from source at startup (~125ms), which also dominates the test suite's run time
+- Loading `core.clj` from source takes ~125ms, so its analyzed form is cached (see Usage) and later `Runtime`s start in ~15ms; the cache is per rclojure version, so checkouts sharing a cache directory replace each other's cache
 
 ## Usage
 
@@ -76,6 +76,12 @@ bin/rclj          # REPL
 bin/rclj file.clj # run a file
 bundle exec rake  # run tests
 ```
+
+The first `Runtime` writes a cache of the analyzed `core.clj` to
+`~/.cache/rclojure` (or `$XDG_CACHE_HOME/rclojure`) so later ones skip
+reading and macroexpanding it. Set `RCLOJURE_CACHE_DIR` to use another
+directory, or to an empty value to turn the cache off. The cache is
+keyed by a digest of rclojure's sources, so changes invalidate it.
 
 ## Namespaces
 

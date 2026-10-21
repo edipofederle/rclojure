@@ -1,4 +1,10 @@
 require "minitest/autorun"
+require "tmpdir"
+
+# Keep the core cache out of the user's cache directory (an empty
+# RCLOJURE_CACHE_DIR runs the suite uncached).
+ENV["RCLOJURE_CACHE_DIR"] ||= File.join(Dir.tmpdir, "rclojure-test-cache")
+
 require "rclojure"
 
 module RClojureTestHelpers

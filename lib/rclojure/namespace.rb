@@ -57,6 +57,18 @@ module RClojure
     def inspect
       "#<RClojure::Var #{self}>"
     end
+
+    # Vars are marshaled by name (for the core cache) and loaded by
+    # interning that name in the Runtime being loaded into.
+    def _dump(_level)
+      "#{ns.name}/#{name}"
+    end
+
+    def self._load(qualified_name)
+      runtime = CoreCache.loading_runtime or raise TypeError, "Vars can only be loaded by a Runtime"
+      ns_name, name = qualified_name.split("/", 2)
+      runtime.find_or_create_namespace(ns_name).intern(name)
+    end
   end
 
   # Like Clojure's Namespace: mappings from names to Vars (its own, plus
