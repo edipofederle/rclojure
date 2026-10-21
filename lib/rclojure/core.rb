@@ -15,6 +15,24 @@ module RClojure
     end
   end
 
+  # Compiled calls with up to 3 args use these, skipping invoke's args
+  # Array when the callee is an rclojure or Ruby-implemented function.
+  def self.invoke0(fn)
+    fn.is_a?(Fn) || fn.is_a?(Builtin) ? fn.call0 : invoke(fn, [])
+  end
+
+  def self.invoke1(fn, a)
+    fn.is_a?(Fn) || fn.is_a?(Builtin) ? fn.call1(a) : invoke(fn, [a])
+  end
+
+  def self.invoke2(fn, a, b)
+    fn.is_a?(Fn) || fn.is_a?(Builtin) ? fn.call2(a, b) : invoke(fn, [a, b])
+  end
+
+  def self.invoke3(fn, a, b, c)
+    fn.is_a?(Fn) || fn.is_a?(Builtin) ? fn.call3(a, b, c) : invoke(fn, [a, b, c])
+  end
+
   def self.get(coll, key, default = nil)
     case coll
     when Map then coll.key?(key) ? coll[key] : default
@@ -130,8 +148,9 @@ module RClojure
       Namespaces.install(ns, runtime)
     end
 
-    def define(ns, name, impl)
-      ns.intern(name).bind_root(Builtin.new("#{ns.name}/#{name}", impl))
+    # fast: optional fixed-arity versions of a variadic impl (see Builtin).
+    def define(ns, name, impl, fast = {})
+      ns.intern(name).bind_root(Builtin.new("#{ns.name}/#{name}", impl, fast))
     end
   end
 end

@@ -12,7 +12,7 @@ A Clojure dialect hosted on Ruby.
 - [x] Milestone 5 — seqs, laziness, persistent collections (seq abstraction, `lazy-seq`, lazy seq library and `for`, persistent lists, vectors, maps and sets)
 - [x] Milestone 6 — Ruby interop (method calls, constants, constructors, blocks, attributes and `set!`, `..`/`doto`, `instance?`, `clj->rb`/`rb->clj`, seqable Enumerables)
 - [x] Milestone 7 — namespaces (`ns`, `require`/`use`/`load`, aliases, `refer` filters, private vars, `::kw`, `ns-*` introspection)
-- [ ] Milestone 8 — compile to Ruby
+- [x] Milestone 8 — compile to Ruby
 
 ## TODO
 
@@ -64,8 +64,10 @@ introduced, and remove it when the gap is closed.
 - Floats print in Ruby format (`1.0e+20`, not `1.0E20`)
 
 **Performance**
-- Tree-walking interpreter: a 1M-iteration `loop*` takes ~3.5s, ~1.9s with YJIT (`RUBY_YJIT_ENABLE=1`) — M8
-- Loading `core.clj` from source takes ~125ms, so its analyzed form is cached (see Usage) and later `Runtime`s start in ~15ms; the cache is per rclojure version, so checkouts sharing a cache directory replace each other's cache
+- A 1M-iteration `loop*` takes ~0.5s on a dev machine without YJIT (the tree-walking interpreter M8 replaced took ~4.4s); CI's `yjit` job reports it with and without YJIT
+- Compiling uses `RubyVM::InstructionSequence`, so rclojure needs CRuby (not JRuby or TruffleRuby)
+- Ruby backtraces from rclojure code point into the generated Ruby (`(rclojure)`), not at rclojure source lines
+- Loading `core.clj` from source takes ~160ms, so its compiled form is cached (see Usage) and later `Runtime`s start in ~5ms; the cache is per rclojure version, so checkouts sharing a cache directory replace each other's cache
 
 ## Usage
 
@@ -78,9 +80,9 @@ bin/rclj file.clj # run a file
 bundle exec rake  # run tests
 ```
 
-The first `Runtime` writes a cache of the analyzed `core.clj` to
-`~/.cache/rclojure` (or `$XDG_CACHE_HOME/rclojure`) so later ones skip
-reading and macroexpanding it. Set `RCLOJURE_CACHE_DIR` to use another
+The first `Runtime` writes a cache of `core.clj` compiled to Ruby bytecode
+to `~/.cache/rclojure` (or `$XDG_CACHE_HOME/rclojure`) so later ones skip
+reading, macroexpanding and compiling it. Set `RCLOJURE_CACHE_DIR` to use another
 directory, or to an empty value to turn the cache off. The cache is
 keyed by a digest of rclojure's sources, so changes invalidate it.
 
@@ -146,13 +148,18 @@ pass rclojure fns as blocks too: `xs.map(&f)`.
 ## Architecture
 
 ```
-source ──Reader──▶ forms ──Analyzer (macroexpand)──▶ Nodes ──#eval(env)──▶ values
+source ──Reader──▶ forms ──Analyzer (macroexpand)──▶ Nodes ──Compiler──▶ Ruby source ──▶ values
 ```
 
 The analyzer expands macros and syntax-quote, resolves symbols to locals or
 Vars, validates special forms and rejects `recur` outside tail position.
-Nodes are evaluated directly for now; milestone 8 will compile them to Ruby
-instead.
+The compiler, modeled on ClojureScript's, turns each top-level form's nodes
+into the source of a Ruby lambda and runs it through
+`RubyVM::InstructionSequence`, so YJIT can compile rclojure code like any
+other Ruby. Locals become Ruby locals, `if` a Ruby conditional (the two
+languages agree on truthiness), and `loop`/`recur` a `while` loop; fns
+created in a loop that close over its locals are wrapped so each keeps the
+values of its own iteration.
 
 Seqs follow Clojure's model: anything `Seqable` has `#seq`, returning an
 `ISeq` (`first`/`rest`/`next`) or nil. `List` is a counted linked list;

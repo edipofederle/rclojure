@@ -5,9 +5,9 @@ module RClojure
       module_function
 
       def install(ns, runtime)
-        define = ->(name, impl) { Core.define(ns, name, impl) }
+        define = ->(name, impl, fast = {}) { Core.define(ns, name, impl, fast) }
 
-        define.("=", ->(x, *more) { more.all? { |y| RClojure.equiv?(x, y) } })
+        define.("=", ->(x, *more) { more.all? { |y| RClojure.equiv?(x, y) } }, { 2 => ->(x, y) { RClojure.equiv?(x, y) } })
         define.("not=", ->(x, *more) { !more.all? { |y| RClojure.equiv?(x, y) } })
         define.("identical?", ->(x, y) { x.equal?(y) })
         define.("compare", ->(x, y) { compare(x, y) })

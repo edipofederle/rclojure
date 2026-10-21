@@ -4,15 +4,12 @@ module RClojure
       module_function
 
       def install(ns)
-        define = ->(name, impl) { Core.define(ns, name, impl) }
+        define = ->(name, impl, fast = {}) { Core.define(ns, name, impl, fast) }
 
-        define.("+", lambda { |*nums|
-          return normalize(nums[0] + nums[1]) if nums.size == 2 # fast path for the common case
-
-          normalize(nums.reduce(0, :+))
-        })
-        define.("*", ->(*nums) { normalize(nums.reduce(1, :*)) })
-        define.("-", ->(x, *nums) { normalize(nums.empty? ? -x : nums.reduce(x, :-)) })
+        define.("+", ->(*nums) { normalize(nums.reduce(0, :+)) }, { 2 => ->(x, y) { normalize(x + y) } })
+        define.("*", ->(*nums) { normalize(nums.reduce(1, :*)) }, { 2 => ->(x, y) { normalize(x * y) } })
+        define.("-", ->(x, *nums) { normalize(nums.empty? ? -x : nums.reduce(x, :-)) },
+                { 1 => ->(x) { normalize(-x) }, 2 => ->(x, y) { normalize(x - y) } })
         define.("/", lambda { |x, *nums|
           nums.empty? ? divide(1, x) : nums.reduce(x) { |acc, n| divide(acc, n) }
         })
@@ -25,13 +22,12 @@ module RClojure
         define.("min", ->(x, *more) { [x, *more].min })
         define.("abs", ->(x) { x.abs })
 
-        { "<" => :<, ">" => :>, "<=" => :<=, ">=" => :>= }.each do |name, op|
+        { "<" => [:<, ->(x, y) { x < y }], ">" => [:>, ->(x, y) { x > y }],
+          "<=" => [:<=, ->(x, y) { x <= y }], ">=" => [:>=, ->(x, y) { x >= y }] }.each do |name, (op, pair)|
           define.(name, lambda { |x, *nums|
-            return x.public_send(op, nums[0]) if nums.size == 1 # fast path for the common case
-
             prev = x
             nums.all? { |n| prev.public_send(op, n).tap { prev = n } }
-          })
+          }, { 2 => pair })
         end
         define.("==", ->(x, *nums) { nums.all? { |n| n == x } })
 

@@ -74,9 +74,9 @@ module RClojure
         return form.rest.reduce(nil) { |_, subform| eval(subform) }
       end
 
-      node = @analyzer.analyze(form)
-      @recorded_nodes&.push(node)
-      node.eval(Env.new)
+      unit = Compiler.new.compile(@analyzer.analyze(form))
+      @recorded_units&.push(unit)
+      Compiler.run(*unit)
     end
 
     # Reads and evaluates each form in turn; returns the last value. Forms
@@ -116,17 +116,17 @@ module RClojure
       load_file(file)
     end
 
-    # Evaluates core.clj's cached nodes if there are any, else loads it
-    # from source, recording its nodes for the cache.
+    # Runs core.clj's cached compiled code if there is any, else loads it
+    # from source, recording each form's compiled code for the cache.
     def load_core(cache)
       if (cached = cache&.load(self))
-        @next_id, nodes = cached
-        nodes.each { |node| node.eval(Env.new) }
+        @next_id, code, constants = cached
+        code.call(constants)
       else
-        @recorded_nodes = []
+        @recorded_units = []
         load_file(CORE_SOURCE)
-        cache&.store(@next_id, @recorded_nodes)
-        @recorded_nodes = nil
+        cache&.store(@next_id, @recorded_units)
+        @recorded_units = nil
       end
     end
     private :load_core
