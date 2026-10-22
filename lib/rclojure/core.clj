@@ -255,6 +255,11 @@
 
 ;;; More macros
 
+(defmacro defonce [name expr]
+  `(let [v# (def ~name)]
+     (when-not (.bound? v#)
+       (def ~name ~expr))))
+
 (defmacro if-let
   ([bindings then] `(if-let ~bindings ~then nil))
   ([bindings then else]
@@ -622,6 +627,10 @@
                        (cons f (step (rest s) (conj seen f))))))
                  xs seen)))]
     (step coll #{})))
+
+(defmacro letfn [fnspecs & body]
+  `(letfn* ~(vec (interleave (map first fnspecs) (map #(cons `fn %) fnspecs)))
+     ~@body))
 
 (defmacro lazy-cat [& colls]
   `(concat ~@(map (fn [c] (list `lazy-seq c)) colls)))

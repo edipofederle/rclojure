@@ -11,6 +11,15 @@ module RClojure
         define.("not=", ->(x, *more) { !more.all? { |y| RClojure.equiv?(x, y) } })
         define.("identical?", ->(x, y) { x.equal?(y) })
         define.("compare", ->(x, y) { compare(x, y) })
+        define.("sort", lambda { |comparator_or_coll, *coll|
+          comparator, coll = coll.empty? ? [nil, comparator_or_coll] : [comparator_or_coll, coll.first]
+          sorted_seq(sorted(RClojure.items(coll)) { |a, b| comparison(comparator, a, b) })
+        })
+        define.("sort-by", lambda { |keyfn, comparator_or_coll, *coll|
+          comparator, coll = coll.empty? ? [nil, comparator_or_coll] : [comparator_or_coll, coll.first]
+          keyed = RClojure.items(coll).map { |item| [RClojure.invoke(keyfn, [item]), item] }
+          sorted_seq(sorted(keyed) { |(a, _), (b, _)| comparison(comparator, a, b) }.map(&:last))
+        })
         define.("hash", ->(x) { x.hash })
         define.("not", ->(x) { !RClojure.truthy?(x) })
 
@@ -53,16 +62,75 @@ module RClojure
         ref.deref
       end
 
-      # nil sorts before everything; otherwise Ruby's <=>.
+      # Like Clojure's compare: nil sorts first; numbers compare across
+      # types; keywords and symbols by namespace (none first), then name;
+      # false before true; vectors by size, then item by item. Other
+      # values need a Ruby <=> that knows the other one.
       def compare(x, y)
-        return 0 if x.nil? && y.nil?
+        return 0 if x.equal?(y)
         return -1 if x.nil?
         return 1 if y.nil?
 
-        result = x <=> y
+        result =
+          case x
+          when Numeric then x <=> y if y.is_a?(Numeric)
+          when ::Symbol then compare_names(Symbol.parse(x.to_s), Symbol.parse(y.to_s)) if y.is_a?(::Symbol)
+          when Symbol then compare_names(x, y) if y.is_a?(Symbol)
+          when true, false then (x ? 1 : 0) <=> (y ? 1 : 0) if y == true || y == false
+          when Vector then compare_vectors(x, y) if y.is_a?(Vector)
+          when Sequential, Map, Set then nil
+          else x <=> y
+          end
         raise ArgumentError, "Cannot compare #{Printer.pr_str(x)} to #{Printer.pr_str(y)}" if result.nil?
 
         result
+      end
+
+      def compare_names(x, y)
+        return -1 if x.ns.nil? && y.ns
+        return 1 if x.ns && y.ns.nil?
+
+        ns_order = x.ns.to_s <=> y.ns.to_s
+        ns_order.zero? ? x.name <=> y.name : ns_order
+      end
+
+      def compare_vectors(x, y)
+        return x.size <=> y.size unless x.size == y.size
+
+        x.each_with_index do |item, i|
+          order = compare(item, y[i])
+          return order unless order.zero?
+        end
+        0
+      end
+
+      # A comparator's verdict on a and b, like Clojure's AFunction.compare:
+      # a number is used as is; for a boolean (from `<`, say), true means
+      # a first, and otherwise the comparator is asked about b and a.
+      def comparison(comparator, a, b)
+        return compare(a, b) unless comparator
+
+        result = RClojure.invoke(comparator, [a, b])
+        case result
+        when true then -1
+        when false, nil then RClojure.truthy?(RClojure.invoke(comparator, [b, a])) ? 1 : 0
+        when Numeric then result <=> 0
+        else raise ArgumentError, "Comparator must return a number or a boolean, got: #{Printer.pr_str(result)}"
+        end
+      end
+
+      # A stable sort (as Clojure's is): items comparing equal keep their order.
+      def sorted(items, &comparison)
+        indexed = items.each_with_index.sort do |(a, i), (b, j)|
+          order = comparison.call(a, b)
+          order.zero? ? i <=> j : order
+        end
+        indexed.map(&:first)
+      end
+
+      # sort's result: a seq, or () when there's nothing to sort.
+      def sorted_seq(items)
+        items.empty? ? List::EMPTY : ArraySeq.new(items, 0)
       end
     end
   end

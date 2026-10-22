@@ -25,14 +25,15 @@ Keep this list current: add an entry whenever a deliberate gap is
 introduced, and remove it when the gap is closed.
 
 **Reader**
-- No character literals (`\a`, `\newline`) — no character type yet
+- Characters are one-character strings, as in ClojureScript: `\a` reads as `"a"`, so `(= \a "a")` is true and `(pr-str \a)` gives `"a"`
 - No metadata (`^{:doc ...}`, `^String`)
-- No `#()` anonymous functions, `#'x` var quote, `#"regex"` or tagged literals (`#inst`)
+- No tagged literals (`#inst`, `#uuid`)
+- Regexes are Ruby `Regexp`s, so `#"..."` uses Ruby's regex syntax (close to Java's, but not identical); there's no `re-matcher` or `re-groups`, as Ruby has no matcher objects to pass around
 - Syntax-quote is expanded by the analyzer rather than the reader, so ``'`(a b)`` yields the raw `(syntax-quote (a b))` form instead of its expansion
 - Floats with an `M` suffix are read as `Float`, not `BigDecimal`
 
 **Language**
-- Missing macros/forms: `letfn`, `defonce`, `defmulti`/`defmethod`, protocols and records
+- Missing macros/forms: `defmulti`/`defmethod`, protocols and records
 - `defn-` marks its var private with a non-standard `Var#private!` call (there is no `^:private` metadata); `defn` skips attr-maps and ignores `{:pre :post}` conditions
 - `case` is a linear chain of `=` tests (no constant-time dispatch or duplicate-constant check)
 - Macros are flagged with a non-standard `set-macro!` builtin instead of `:macro` metadata; `&env` maps symbols to internal `LocalBinding` objects
@@ -58,9 +59,8 @@ introduced, and remove it when the gap is closed.
 - `apply` realizes its whole argument seq, so it can't take an infinite seq
 - Lazy seq realization isn't synchronized, so sharing an unrealized seq between Ruby threads can run its body twice
 - `str` of a lazy seq gives its contents, not Clojure's `clojure.lang.LazySeq@<hash>`
-- Strings are not seqable (`(first "abc")` errors) — needs a character type
 - Map entries are plain two-element vectors
-- `<`/`>` use Ruby semantics, so they also compare strings instead of erroring; `compare` doesn't support collections
+- `<`/`>` use Ruby semantics, so they also compare strings instead of erroring
 - Floats print in Ruby format (`1.0e+20`, not `1.0E20`)
 
 **Performance**
@@ -87,6 +87,8 @@ directory, or to an empty value to turn the cache off. The cache is
 keyed by a digest of rclojure's sources, so changes invalidate it.
 
 ## Namespaces
+
+rclojure ships `clojure.string` and `clojure.set`: `(require '[clojure.string :as str])`.
 
 `require` finds `my-app.util` in `my_app/util.clj` under one of the
 directories on the load path: `RCLOJURE_PATH` (separated like `PATH`),

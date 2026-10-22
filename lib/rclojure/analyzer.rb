@@ -1,7 +1,7 @@
 module RClojure
   # Turns forms into Nodes, resolving symbols and validating special forms.
   class Analyzer
-    SPECIAL_FORMS = %w[def if do let* loop* recur fn* quote var throw try . new set!].freeze
+    SPECIAL_FORMS = %w[def if do let* letfn* loop* recur fn* quote var throw try . new set!].freeze
     DOT = Symbol.new(nil, ".")
     NEW = Symbol.new(nil, "new")
     DO = Symbol.new(nil, "do")
@@ -325,6 +325,20 @@ module RClojure
     end
 
     # Returns [[[LocalBinding, init_node], ...], scope_with_all_bindings].
+    # (letfn* [name fn-form ...] body*): every name is in scope in every
+    # fn-form, so the fns can call each other.
+    def analyze_letfn(args, scope, tail)
+      vector = args.first
+      raise CompilerError, "letfn* requires a vector for its binding" unless vector.is_a?(Vector)
+      raise CompilerError, "letfn* requires an even number of forms in binding vector" if vector.size.odd?
+
+      pairs = vector.each_slice(2).to_a
+      locals = pairs.map { |name, _| LocalBinding.new(local_name(name, "letfn*")) }
+      scope = scope.with_locals(locals)
+      bindings = pairs.zip(locals).map { |(_, init), binding| [binding, analyze(init, scope)] }
+      Nodes::LetFn.new(bindings, analyze_body(args.drop(1), scope, tail))
+    end
+
     def analyze_bindings(form_name, args, scope)
       vector = args.first
       raise CompilerError, "#{form_name} requires a vector for its binding" unless vector.is_a?(Vector)

@@ -37,7 +37,7 @@ module RClojure
     case coll
     when Map then coll.key?(key) ? coll[key] : default
     when Set then coll.include?(key) ? key : default
-    when Vector then key.is_a?(Integer) && key.between?(0, coll.size - 1) ? coll[key] : default
+    when Vector, ::String then key.is_a?(Integer) && key.between?(0, coll.size - 1) ? coll[key] : default
     else default
     end
   end
@@ -62,6 +62,7 @@ module RClojure
     when Array then coll.empty? ? nil : ArraySeq.new(coll, 0)
     when Hash then coll.empty? ? nil : ArraySeq.new(coll.map { |key, value| Vector[key, value] }, 0)
     when Enumerable then enumerator_seq(coll.each_entry).seq
+    when ::String then coll.empty? ? nil : ArraySeq.new(coll.chars.each(&:freeze), 0)
     else raise Error, "Don't know how to create ISeq from: #{coll.class.name}"
     end
   end

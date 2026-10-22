@@ -2,6 +2,9 @@ module RClojure
   # Owns the namespaces and evaluates forms. Each Runtime is independent.
   class Runtime
     CORE_SOURCE = File.expand_path("core.clj", __dir__)
+    # rclojure's own libs (clojure.string, clojure.set), searched after the
+    # load path, like the Clojure jar on the classpath.
+    BUILTIN_SOURCES = File.expand_path("clj", __dir__)
 
     # Directories `require` searches for libs, like Clojure's classpath:
     # RCLOJURE_PATH (separated like PATH), else the current directory.
@@ -108,10 +111,11 @@ module RClojure
     end
 
     # Loads resource ("foo/bar_baz") from the first load path directory
-    # that has resource.clj.
+    # (or rclojure's built-in sources) that has resource.clj.
     def load_resource(resource)
-      file = @load_path.map { |dir| File.join(dir, "#{resource}.clj") }.find { |path| File.file?(path) }
-      raise Error, "Could not locate #{resource}.clj on load path: #{@load_path.join(File::PATH_SEPARATOR)}" unless file
+      dirs = @load_path + [BUILTIN_SOURCES]
+      file = dirs.map { |dir| File.join(dir, "#{resource}.clj") }.find { |path| File.file?(path) }
+      raise Error, "Could not locate #{resource}.clj on load path: #{dirs.join(File::PATH_SEPARATOR)}" unless file
 
       load_file(file)
     end

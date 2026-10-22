@@ -51,6 +51,7 @@ module RClojure
       when Nodes::If then "(#{expr(node.test)} ? (#{expr(node.then_branch)}) : (#{expr(node.else_branch)}))"
       when Nodes::Do then "(#{(node.statements.map { |s| expr(s) } << expr(node.ret)).join("\n")})"
       when Nodes::Let then "(#{bind(node.bindings)}\n#{expr(node.body)})"
+      when Nodes::LetFn then "(#{bind_fns(node.bindings)}\n#{expr(node.body)})"
       when Nodes::Loop then compile_loop(node)
       when Nodes::FnNode then compile_fn(node)
       when Nodes::Invoke then compile_invoke(node)
@@ -72,6 +73,7 @@ module RClojure
       when Nodes::If then "if #{expr(node.test)}\n#{tail(node.then_branch)}\nelse\n#{tail(node.else_branch)}\nend"
       when Nodes::Do then (node.statements.map { |s| expr(s) } << tail(node.ret)).join("\n")
       when Nodes::Let then "#{bind(node.bindings)}\n#{tail(node.body)}"
+      when Nodes::LetFn then "#{bind_fns(node.bindings)}\n#{tail(node.body)}"
       when Nodes::RecurNode then compile_recur(node)
       else "break #{expr(node)}"
       end
@@ -86,6 +88,16 @@ module RClojure
         @loop_locals[binding] = true if @loop_locals
         "#{name(binding)} = #{expr(init)}"
       end.join("\n")
+    end
+
+    # letfn* fns refer to each other's variables, so they're created in a
+    # lambda called right away whose block-local variables are fresh each
+    # time (a letfn* in a loop gets new ones per iteration), then copied out.
+    def bind_fns(bindings)
+      names = bindings.map { |binding, _| name(binding) }.join(", ")
+      inits = bindings.map { |binding, init| "#{name(binding)} = #{expr(init)}" }.join("\n")
+      bindings.each { |binding, _| @loop_locals[binding] = true } if @loop_locals
+      "#{names}, = ->(;#{names}) {\n#{inits}\n[#{names}]\n}.()"
     end
 
     def compile_loop(node)

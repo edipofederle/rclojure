@@ -7,6 +7,11 @@ module RClojure
     COMMENT = /;[^\n]*/
     # Characters that end a symbol, number or keyword token.
     TOKEN = /[^\s,()\[\]{}"';`~^@\\]+/
+    # What follows a character literal's first character, up to whitespace
+    # or a terminating macro character (Clojure's readToken).
+    CHARACTER_TOKEN_TAIL = /[^\s,()\[\]{}"`;~^@\\]*/
+    CHARACTER_NAMES = { "newline" => "\n", "space" => " ", "tab" => "\t", "backspace" => "\b",
+                        "formfeed" => "\f", "return" => "\r" }.freeze
     INTEGER = /\A([-+]?)(\d+)N?\z/
     RATIO = /\A([-+]?\d+)\/(\d+)\z/
     FLOAT = /\A[-+]?\d+(\.\d*)?([eE][-+]?\d+)?M?\z/
@@ -18,10 +23,20 @@ module RClojure
     UNQUOTE          = Symbol.new(nil, "unquote")
     UNQUOTE_SPLICING = Symbol.new(nil, "unquote-splicing")
     DEREF            = Symbol.new(nil, "deref")
+    VAR              = Symbol.new(nil, "var")
+    FN               = Symbol.new(nil, "fn*")
+    AMPERSAND        = Symbol.new(nil, "&")
+    # An argument literal in #(): %, %& or %n.
+    ARG = /\A%(?:(&)|([1-9][0-9]*))?\z/
 
     # Sentinel returned when a form was discarded with `#_`.
     DISCARDED = Object.new.freeze
     private_constant :DISCARDED
+
+    # Ids for #() parameter names, like Clojure's RT.nextID.
+    def self.next_id
+      @next_id = (@next_id || 0) + 1
+    end
 
     def self.read_string(source, ns_resolver: nil)
       reader = new(source, ns_resolver: ns_resolver)
@@ -92,7 +107,7 @@ module RClojure
         @scanner.skip(/@/) ? wrap(UNQUOTE_SPLICING) : wrap(UNQUOTE)
       when "@" then @scanner.getch; wrap(DEREF)
       when "#" then read_dispatch
-      when "\\" then error("Character literals are not supported yet")
+      when "\\" then read_character
       when "^" then error("Metadata is not supported yet")
       else read_atom
       end
@@ -137,8 +152,66 @@ module RClojure
       when "_"
         read
         DISCARDED
+      when "'" then List[VAR, read]
+      when "(" then read_fn
+      when '"' then read_regex
       when nil then error("Unexpected end of input after #", EOFError)
       else error("Unsupported dispatch macro: ##{@scanner.string[@scanner.pos - 1]}")
+      end
+    end
+
+    # #(...) => (fn* [p1__N# ...] (...)), like Clojure's FnReader: %, %n
+    # and %& in the body become the params, in order, with a rest param
+    # for %&; params up to the highest %n are generated even if unused.
+    def read_fn
+      error("Nested #()s are not allowed") if @fn_args
+      @fn_args = {}
+      body = List.from(read_until(")"))
+      params = (1..(@fn_args.keys.select(&:positive?).max || 0)).map { |n| @fn_args[n] || fn_arg(n) }
+      params += [AMPERSAND, @fn_args[-1]] if @fn_args.key?(-1)
+      List[FN, Vector.new(params), body]
+    ensure
+      @fn_args = nil
+    end
+
+    def fn_arg(n)
+      Symbol.new(nil, "#{n == -1 ? 'rest' : "p#{n}"}__#{Reader.next_id}#")
+    end
+
+    # #"..." is a Regexp. As in Clojure, backslash escapes are kept as
+    # written, for the regex engine (Ruby's) to interpret.
+    def read_regex
+      source = +""
+      loop do
+        char = @scanner.getch or error("EOF while reading regex", EOFError)
+        break if char == '"'
+
+        source << char
+        source << (@scanner.getch or error("EOF while reading regex", EOFError)) if char == "\\"
+      end
+      Regexp.new(source).freeze
+    rescue RegexpError => e
+      error("Invalid regex: #{e.message}")
+    end
+
+    # Characters are one-character strings, as in ClojureScript.
+    def read_character
+      @scanner.getch # backslash
+      first = @scanner.getch or error("EOF while reading character", EOFError)
+      token = first + @scanner.scan(CHARACTER_TOKEN_TAIL)
+      return token.freeze if token.length == 1
+      return CHARACTER_NAMES[token] if CHARACTER_NAMES.key?(token)
+
+      case token
+      when /\Au(\h{4})\z/
+        code = Integer($1, 16)
+        error("Invalid character constant: \\u#{$1}") if code.between?(0xD800, 0xDFFF)
+        code.chr(Encoding::UTF_8).freeze
+      when /\Ao([0-7]{1,3})\z/
+        code = Integer($1, 8)
+        error("Octal escape sequence must be in range [0, 377].") if code > 0o377
+        code.chr(Encoding::UTF_8).freeze
+      else error("Unsupported character: \\#{token}")
       end
     end
 
@@ -178,8 +251,15 @@ module RClojure
       when /\A::/ then read_auto_resolved_keyword(token)
       when /\A:(.+)\z/ then $1.to_sym
       when /\A[-+]?\d/ then error("Invalid number: #{token}")
+      when /\A%/ then @fn_args ? read_fn_arg(token) : Symbol.parse(token)
       else Symbol.parse(token)
       end
+    end
+
+    def read_fn_arg(token)
+      match = ARG.match(token) or error("arg literal must be %, %& or %integer")
+      n = match[1] ? -1 : Integer(match[2] || 1)
+      @fn_args[n] ||= fn_arg(n)
     end
 
     # Like Clojure: `::kw` takes the current namespace, `::alias/kw` an alias's.

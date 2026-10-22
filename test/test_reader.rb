@@ -78,4 +78,51 @@ class TestReader < Minitest::Test
     assert_equal 2, error.line
     assert_equal 3, error.column
   end
+
+  def test_characters_are_one_character_strings
+    assert_equal "a", read("\\a")
+    assert_equal ["\n", " ", "\t", "\b", "\f", "\r"], read("[\\newline \\space \\tab \\backspace \\formfeed \\return]").to_a
+    assert_equal ["(", ")", "\\", ","], read("[\\( \\) \\\\ \\,]").to_a
+    assert_equal "A", read("\\u0041")
+    assert_equal "λ", read("\\λ")
+    assert_equal "A", read("\\o101")
+    assert_equal List["a", "b"], read("(\\a \\b)")
+    assert_predicate read("\\a"), :frozen?
+    assert_raises(ReaderError) { read("\\abc") }
+    assert_raises(ReaderError) { read("\\o400") }
+    assert_raises(ReaderError) { read("\\uD800") }
+    assert_raises(EOFError) { read("\\") }
+  end
+
+  def test_var_quote
+    assert_equal List[sym("var"), sym("foo/bar")], read("#'foo/bar")
+  end
+
+  def test_anonymous_fns
+    form = read("#(+ % %2)")
+    assert_equal sym("fn*"), form.first
+    params = form.to_a[1].to_a
+    assert_equal 2, params.size
+    assert_match(/\Ap1__\d+#\z/, params[0].name)
+    assert_match(/\Ap2__\d+#\z/, params[1].name)
+    assert_equal List[sym("+"), *params], form.to_a[2]
+
+    params = read("#(list %3 %&)").to_a[1].to_a
+    assert_equal 5, params.size # p1 and p2 are generated though unused
+    assert_equal sym("&"), params[3]
+    assert_match(/\Arest__\d+#\z/, params[4].name)
+
+    assert_equal 0, read("#(rand)").to_a[1].size
+    assert_equal sym("%"), read("%") # outside #() it's an ordinary symbol
+    assert_raises(ReaderError) { read("#(#(%))") }
+    assert_raises(ReaderError) { read("#(%a)") }
+  end
+
+  def test_regexes
+    assert_equal(/\d+/, read('#"\d+"'))
+    assert_match read('#"a\"b"'), 'a"b' # the backslash is kept, as in Clojure
+    assert_predicate read('#"x"'), :frozen?
+    assert_raises(ReaderError) { read('#"("') }
+    assert_raises(EOFError) { read('#"abc') }
+  end
 end

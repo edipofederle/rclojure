@@ -20,6 +20,7 @@ module RClojure
       case value
       when nil then ""
       when ::String then value
+      when Regexp then value.source
       else pr_str(value)
       end
     end
@@ -42,6 +43,7 @@ module RClojure
       when Atom then "#<Atom #{write(value.deref, readably)}>"
       when ExceptionInfo then "#<ExceptionInfo #{write(value.message, true)} #{write(value.data, true)}>"
       when Exception then "#<#{value.class} #{write(value.message, true)}>"
+      when Regexp then "#\"#{value.source}\""
       when Class, Module then value.name
       else value.inspect
       end

@@ -39,6 +39,8 @@ source ──Reader──▶ forms ──Analyzer (macroexpand)──▶ Nodes �
 
 ### Where to add language features
 
+- Characters are one-character frozen Strings, as in ClojureScript (the reader turns `\a` into `"a"`); `RClojure.seq` on a String gives an `ArraySeq` of them.
+- rclojure's own libs (`clojure.string`, `clojure.set`) live in `lib/rclojure/clj/`, which `Runtime#load_resource` searches after the load path (`Runtime::BUILTIN_SOURCES`, like the Clojure jar on the classpath). Where Clojure's version calls Java, they call Ruby helpers through interop; Java semantics Ruby lacks (`Pattern.split`, `$1` replacement strings, `Character.isWhitespace`) are ported in `string_support.rb`.
 - Ruby primitives go in `lib/rclojure/core/{numbers,collections,text,lang,interop,namespaces}.rb`, registered with `define.("name", ->(...) { ... })` inside each module's `install`. Shared helpers (`RClojure.items`, `seq`, `equiv?`, `truthy?`, `get`) live in `core.rb`.
 - Anything expressible in rclojure goes in `lib/rclojure/core.clj`. **Order matters there**: it bootstraps `defmacro` from `fn*`, and `fn`/`let`/`loop` are plain-symbol versions until `destructure` is defined, after which they're redefined with destructuring.
 - Macros are flagged via the non-standard `set-macro!` builtin (no metadata support yet); macro fns take implicit `&form` and `&env` first.
@@ -48,7 +50,7 @@ source ──Reader──▶ forms ──Analyzer (macroexpand)──▶ Nodes �
 
 ## Tests
 
-`test/test_helper.rb` provides `EvalTestHelpers` (`ev(source)`, `assert_ev(expected, source)` against a fresh Runtime) and `RClojureTestHelpers` (`read`, `sym`). Test files are grouped by layer: reader, printer, eval (special forms), compiler, core, macros, seqs, collections, interop, namespaces, core cache. `test_namespaces.rb` gives each test a Runtime whose load path is a temp dir, and writes lib files into it.
+`test/test_helper.rb` provides `EvalTestHelpers` (`ev(source)`, `assert_ev(expected, source)` against a fresh Runtime) and `RClojureTestHelpers` (`read`, `sym`). Test files are grouped by layer: reader, printer, eval (special forms), compiler, core, macros, seqs, collections, everyday (chars, regexes, sorting, letfn, `clojure.string`/`clojure.set`), interop, namespaces, core cache. `test_namespaces.rb` gives each test a Runtime whose load path is a temp dir, and writes lib files into it.
 
 ## Conventions
 

@@ -32,8 +32,24 @@ module RClojure
         })
 
         define.("string?", ->(x) { x.is_a?(::String) })
+        # Characters are one-character strings, as in ClojureScript.
+        define.("char?", ->(x) { x.is_a?(::String) && x.length == 1 })
+        define.("char", lambda { |x|
+          case x
+          when Integer then x.chr(Encoding::UTF_8).freeze
+          when ::String then x.length == 1 ? x : raise(ArgumentError, "Argument to char must be a character or number")
+          else raise ArgumentError, "Argument to char must be a character or number"
+          end
+        })
         define.("keyword?", ->(x) { x.is_a?(::Symbol) })
         define.("symbol?", ->(x) { x.is_a?(Symbol) })
+
+        define.("re-pattern", ->(x) { x.is_a?(Regexp) ? x : Regexp.new(x).freeze })
+        define.("re-find", ->(re, s) { (match = re.match(s)) && re_groups(match) })
+        define.("re-matches", lambda { |re, s|
+          (match = Regexp.new("\\A(?:#{re.source})\\z", re.options).match(s)) && re_groups(match)
+        })
+        define.("re-seq", ->(re, s) { re_seq(re, s, 0).seq })
 
         define.("pr-str", ->(*values) { values.map { |v| Printer.pr_str(v) }.join(" ") })
         define.("print-str", ->(*values) { values.map { |v| Printer.print_str(v) }.join(" ") })
@@ -42,6 +58,22 @@ module RClojure
         define.("print", ->(*values) { output(values.map { |v| Printer.print_str(v) }.join(" ")) })
         define.("println", ->(*values) { output(values.map { |v| Printer.print_str(v) }.join(" ") + "\n") })
         define.("newline", -> { output("\n") })
+      end
+
+      # Like Clojure's re-groups: the match, or with capture groups a vector
+      # of it followed by each group (nil when a group didn't take part).
+      def re_groups(match)
+        match.size == 1 ? match[0] : Vector.new(match.to_a)
+      end
+
+      # Every match of re in s from pos, lazily. Like Matcher.find, an empty
+      # match moves the next search on by a character.
+      def re_seq(re, s, pos)
+        LazySeq.new(lambda {
+          match = re.match(s, pos) or return nil
+          following = match.end(0) == match.begin(0) ? match.end(0) + 1 : match.end(0)
+          Cons.new(re_groups(match), following > s.length ? nil : re_seq(re, s, following))
+        })
       end
 
       # [namespace, name] of a string, symbol or keyword.

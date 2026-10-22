@@ -25,6 +25,8 @@ module RClojure
     Do = Struct.new(:statements, :ret)
     # bindings: [[LocalBinding, node], ...], evaluated sequentially.
     Let = Struct.new(:bindings, :body)
+    # Like Let, but every binding is in scope in every init.
+    LetFn = Struct.new(:bindings, :body)
     Loop = Struct.new(:bindings, :body)
     # Only ever in tail position of a loop* or fn* method, which it re-runs.
     RecurNode = Struct.new(:args)

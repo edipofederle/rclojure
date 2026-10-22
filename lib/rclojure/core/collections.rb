@@ -125,7 +125,7 @@ module RClojure
       def nth(coll, index, not_found)
         found = case coll
                 when nil then NONE
-                when Vector, Array then index.is_a?(Integer) && index.between?(0, coll.size - 1) ? coll[index] : NONE
+                when Vector, Array, ::String then index.is_a?(Integer) && index.between?(0, coll.size - 1) ? coll[index] : NONE
                 when ISeq then nth_of_seq(coll, index)
                 else raise Error, "nth not supported on this type: #{coll.class.name}"
                 end

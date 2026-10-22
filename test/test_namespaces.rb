@@ -175,7 +175,7 @@ class TestNamespaces < Minitest::Test
 
   def test_require_errors
     error = assert_raises(Error) { ev("(require 'no.such-lib)") }
-    assert_equal "Could not locate no/such_lib.clj on load path: #{@dir}", error.message
+    assert_equal "Could not locate no/such_lib.clj on load path: #{@dir}:#{Runtime::BUILTIN_SOURCES}", error.message
     assert_raises(ExceptionInfo) { ev("(require 'x :bogus)") }
     assert_raises(ExceptionInfo) { ev("(require)") }
 

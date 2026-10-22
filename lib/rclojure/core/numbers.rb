@@ -21,6 +21,10 @@ module RClojure
         define.("max", ->(x, *more) { [x, *more].max })
         define.("min", ->(x, *more) { [x, *more].min })
         define.("abs", ->(x) { x.abs })
+        # A character (one-character string) coerces to its code point.
+        define.("int", ->(x) { x.is_a?(::String) ? x.ord : Integer(x.truncate) })
+        define.("long", ->(x) { x.is_a?(::String) ? x.ord : Integer(x.truncate) })
+        define.("double", ->(x) { Float(x) })
 
         { "<" => [:<, ->(x, y) { x < y }], ">" => [:>, ->(x, y) { x > y }],
           "<=" => [:<=, ->(x, y) { x <= y }], ">=" => [:>=, ->(x, y) { x >= y }] }.each do |name, (op, pair)|
