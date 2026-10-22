@@ -768,6 +768,130 @@
     (assoc m k (apply update-in (get m k) ks f args))
     (assoc m k (apply f (get m k) args))))
 
+;;; Hierarchies and multimethods
+;;
+;; As in Clojure, a hierarchy is a map of :parents, :ancestors and
+;; :descendants, each from a tag to a set of tags, and Ruby classes and
+;; modules also form one through their ancestors. Multimethods
+;; (RClojure::MultiFn, ported from Clojure's MultiFn) dispatch with isa?.
+
+(defn make-hierarchy []
+  {:parents {} :descendants {} :ancestors {}})
+
+(def ^:private global-hierarchy (make-hierarchy))
+
+(defn isa?
+  ([child parent] (isa? global-hierarchy child parent))
+  ([h child parent]
+   (or (= child parent)
+       (and (class? parent) (class? child) (.<= child parent))
+       (contains? (get (:ancestors h) child) parent)
+       (and (class? child)
+            (some #(contains? (get (:ancestors h) %) parent) (supers child)))
+       (and (vector? parent) (vector? child)
+            (= (count parent) (count child))
+            (every? identity (map #(isa? h %1 %2) child parent))))))
+
+(defn parents
+  ([tag] (parents global-hierarchy tag))
+  ([h tag]
+   (let [tag-parents (get (:parents h) tag)]
+     (not-empty (if (class? tag) (into (set (bases tag)) tag-parents) tag-parents)))))
+
+(defn ancestors
+  ([tag] (ancestors global-hierarchy tag))
+  ([h tag]
+   (let [tag-ancestors (get (:ancestors h) tag)]
+     (not-empty
+      (if (class? tag)
+        ;; a class's superclasses and modules, and their derived ancestors
+        (let [superclasses (set (supers tag))]
+          (reduce into superclasses (cons tag-ancestors (map #(get (:ancestors h) %) superclasses))))
+        tag-ancestors)))))
+
+(defn descendants
+  ([tag] (descendants global-hierarchy tag))
+  ([h tag]
+   (when (class? tag)
+     (throw (ex-info "Can't get descendants of classes" {:tag tag})))
+   (not-empty (get (:descendants h) tag))))
+
+(defn- named? [x] (or (keyword? x) (symbol? x)))
+
+(defn derive
+  ([tag parent]
+   (assert (namespace parent))
+   (assert (or (class? tag) (and (named? tag) (namespace tag))))
+   (alter-var-root #'global-hierarchy derive tag parent)
+   nil)
+  ([h tag parent]
+   (assert (not= tag parent))
+   (assert (or (class? tag) (named? tag)))
+   (assert (named? parent))
+   (let [{:keys [parents ancestors descendants]} h]
+     (cond
+       (contains? (get parents tag) parent) h
+       (contains? (get ancestors tag) parent)
+       (throw (ex-info (print-str tag "already has" parent "as ancestor") {}))
+       (contains? (get ancestors parent) tag)
+       (throw (ex-info (print-str "Cyclic derivation:" parent "has" tag "as ancestor") {}))
+       :else
+       ;; tag and its descendants gain parent and its ancestors, and vice versa
+       (let [below (cons tag (get descendants tag))
+             above (cons parent (get ancestors parent))
+             add-all (fn [m ks vs]
+                       (reduce (fn [m k] (assoc m k (into (get m k #{}) vs))) m ks))]
+         {:parents (assoc parents tag (conj (get parents tag #{}) parent))
+          :ancestors (add-all ancestors below above)
+          :descendants (add-all descendants above below)})))))
+
+(defn underive
+  ([tag parent]
+   (alter-var-root #'global-hierarchy underive tag parent)
+   nil)
+  ([h tag parent]
+   (if (contains? (get (:parents h) tag) parent)
+     ;; rebuilt from the parent links that remain
+     (reduce (fn [h [child child-parents]]
+               (reduce #(derive %1 child %2) h child-parents))
+             (make-hierarchy)
+             (update (:parents h) tag disj parent))
+     h)))
+
+(defmacro defmulti [mm-name & options]
+  (let [docstring (when (string? (first options)) (first options))
+        options (if docstring (next options) options)
+        m (if (map? (first options)) (first options) {})
+        options (if (map? (first options)) (next options) options)
+        dispatch-fn (first options)
+        options (next options)
+        m (if docstring (assoc m :doc docstring) m)
+        mm-name (with-meta mm-name (merge (meta mm-name) m))]
+    (when (= (count options) 1)
+      (throw (ex-info "The syntax for defmulti has changed. Example: (defmulti name dispatch-fn :default dispatch-value)" {})))
+    (let [options (apply hash-map options)
+          default (get options :default :default)
+          hierarchy (get options :hierarchy `(var global-hierarchy))]
+      (when (seq (remove #{:default :hierarchy} (keys options)))
+        (throw (ex-info "Only these options are valid: :default, :hierarchy" {:options options})))
+      ;; like defonce: evaluating a defmulti again keeps the existing methods
+      `(let [v# (def ~mm-name)]
+         (when-not (and (.bound? v#) (instance? RClojure::MultiFn (deref v#)))
+           (def ~mm-name
+             (RClojure::MultiFn/new ~(name mm-name) ~dispatch-fn ~default ~hierarchy
+                                    (var isa?) (var parents))))))))
+
+(defmacro defmethod [multifn dispatch-val & fn-tail]
+  `(.add-method ~multifn ~dispatch-val (fn ~@fn-tail)))
+
+(defn remove-all-methods [multifn] (.reset multifn))
+(defn remove-method [multifn dispatch-val] (.remove-method multifn dispatch-val))
+(defn prefer-method [multifn dispatch-val-x dispatch-val-y]
+  (.prefer-method multifn dispatch-val-x dispatch-val-y))
+(defn methods [multifn] (.method-table multifn))
+(defn get-method [multifn dispatch-val] (.get-method multifn dispatch-val))
+(defn prefers [multifn] (.prefer-table multifn))
+
 ;;; Vars
 
 (defn with-redefs-fn [binding-map func]

@@ -33,7 +33,7 @@ introduced, and remove it when the gap is closed.
 - Floats with an `M` suffix are read as `Float`, not `BigDecimal`
 
 **Language**
-- Missing macros/forms: `defmulti`/`defmethod`, protocols and records
+- No protocols, types or records (`defprotocol`, `deftype`, `defrecord`, `reify`)
 - `defn` ignores `{:pre :post}` conditions
 - `case` is a linear chain of `=` tests (no constant-time dispatch or duplicate-constant check)
 - `&env` maps symbols to internal `LocalBinding` objects
@@ -136,6 +136,8 @@ Math/PI                            ; Math::PI
 (.. Time (at 0) utc year)          ; Time.at(0).utc.year
 (doto (Array/new) (.push 1) (.push 2))
 (instance? String "a")
+(isa? Integer Numeric)             ; classes and modules work in hierarchies,
+(defmulti kind class)              ; so multimethods can dispatch on them
 (clj->rb {:a [1 2]})               ; {a: [1, 2]}; rb->clj goes back
 (take 3 (Range/new 1 nil))         ; Ruby Enumerables are lazily seqable
 ```
