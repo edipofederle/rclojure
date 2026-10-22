@@ -4,6 +4,7 @@ module RClojure
   # Never empty.
   class VectorSeq
     include ISeq
+    include IObj
 
     # node is the leaf holding the vector's items from index on; offset
     # is the position within it.

@@ -117,7 +117,8 @@ class TestInterop < Minitest::Test
     assert_ev 8, "(do (set! (. p -x) 8) (.-x p))"
     assert_raises(CompilerError) { ev("(.-x p 1)") }
     assert_raises(CompilerError) { ev("(let [y 1] (set! y 2))") }
-    assert_raises(CompilerError) { ev("(set! p 2)") }
+    # set! on a var needs a thread binding (see test_dynamic_vars)
+    assert_equal "Can't change/establish root binding of: p with set", assert_raises(Error) { ev("(set! p 2)") }.message
     assert_raises(CompilerError) { ev("(set! (.x p 1) 2)") }
     assert_raises(CompilerError) { ev("(set! 1 2)") }
   end

@@ -6,6 +6,7 @@ module RClojure
   # PersistentHashMap, sharing structure between versions, and stays one.
   class Map
     include Seqable
+    include IObj
     include Enumerable
 
     ARRAY_MAP_MAX = 8
@@ -126,10 +127,11 @@ module RClojure
     end
 
     def marshal_dump
-      to_h
+      [to_h, @meta]
     end
 
-    def marshal_load(hash)
+    def marshal_load((hash, meta))
+      @meta = meta
       initialize(hash)
     end
 

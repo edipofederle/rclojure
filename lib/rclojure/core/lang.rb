@@ -45,7 +45,27 @@ module RClojure
         define.("read-string", ->(source) { Reader.read_string(source, ns_resolver: runtime.method(:auto_resolve_namespace)) })
         define.("eval", ->(form) { runtime.eval(form) })
 
-        define.("set-macro!", ->(var) { var.macro! })
+        define.("meta", ->(x) { x.is_a?(IObj) || x.is_a?(Var) || x.is_a?(Namespace) ? x.meta : nil })
+        define.("with-meta", lambda { |x, meta|
+          raise Error, "Can't attach metadata to: #{Printer.pr_str(x)}" unless x.is_a?(IObj)
+
+          x.with_meta(meta)
+        })
+        define.("reset-meta!", ->(ref, meta) { reference!(ref).reset_meta(meta) })
+        define.("alter-meta!", lambda { |ref, f, *args|
+          reference!(ref).reset_meta(RClojure.invoke(f, [ref.meta, *args]))
+        })
+
+        define.("push-thread-bindings", ->(bindings) { Var.push_thread_bindings(bindings.to_h) })
+        define.("pop-thread-bindings", -> { Var.pop_thread_bindings })
+        define.("var-get", ->(var) { var.deref })
+        define.("var-set", ->(var, value) { var.set(value) })
+        define.("alter-var-root", lambda { |var, f, *args|
+          var.bind_root(RClojure.invoke(f, [var.root, *args]))
+          var.root
+        })
+        define.("bound?", ->(*vars) { vars.all?(&:bound?) })
+        define.("thread-bound?", ->(*vars) { vars.all? { |var| !var.thread_binding.nil? } })
         define.("macroexpand-1", ->(form) { runtime.analyzer.macroexpand_1(form) })
         define.("macroexpand", ->(form) { runtime.analyzer.macroexpand(form) })
         define.("gensym", ->(prefix = "G__") { Symbol.new(nil, "#{Printer.str(prefix)}#{runtime.next_id}") })
@@ -54,6 +74,13 @@ module RClojure
         define.("ex-data", ->(ex) { ex.respond_to?(:data) ? ex.data : nil })
         define.("ex-message", ->(ex) { ex.is_a?(Exception) ? ex.message : nil })
         define.("ex-cause", ->(ex) { ex.is_a?(Exception) ? ex.cause : nil })
+      end
+
+      # Vars and namespaces hold mutable metadata (Clojure's IReference).
+      def reference!(ref)
+        return ref if ref.is_a?(Var) || ref.is_a?(Namespace)
+
+        raise Error, "Can't alter metadata of: #{Printer.pr_str(ref)}"
       end
 
       def deref(ref)

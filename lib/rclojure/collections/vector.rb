@@ -6,6 +6,7 @@ module RClojure
   # with nils), so Clojure's "set slot to null" becomes dropping the last.
   class Vector
     include Seqable
+    include IObj
     include Sequential
 
     BITS = 5
@@ -161,10 +162,11 @@ module RClojure
     end
 
     def marshal_dump
-      to_a
+      [to_a, @meta]
     end
 
-    def marshal_load(items)
+    def marshal_load((items, meta))
+      @meta = meta
       initialize(items)
     end
 

@@ -18,7 +18,17 @@ module RClojure
       @gensyms = {}
     end
 
+    # Like Clojure's reader, metadata on form (a symbol or collection) is
+    # syntax-quoted too and attached with with-meta.
     def expand(form)
+      expanded = expand_form(form)
+      meta = form.is_a?(IObj) ? form.meta : nil
+      meta.nil? || meta.empty? ? expanded : List[core("with-meta"), expanded, expand(meta)]
+    end
+
+    private
+
+    def expand_form(form)
       case form
       when Symbol then List[QUOTE, qualify(form)]
       when ISeq then expand_list(form)
@@ -28,8 +38,6 @@ module RClojure
       else form # nil, booleans, numbers, strings, keywords evaluate to themselves
       end
     end
-
-    private
 
     def expand_list(form)
       return List[core("list")] if form.empty?

@@ -108,7 +108,7 @@ module RClojure
       when "@" then @scanner.getch; wrap(DEREF)
       when "#" then read_dispatch
       when "\\" then read_character
-      when "^" then error("Metadata is not supported yet")
+      when "^" then read_meta
       else read_atom
       end
     end
@@ -158,6 +158,24 @@ module RClojure
       when nil then error("Unexpected end of input after #", EOFError)
       else error("Unsupported dispatch macro: ##{@scanner.string[@scanner.pos - 1]}")
       end
+    end
+
+    # ^meta form: like Clojure's MetaReader, ^:kw is {:kw true}, ^Sym and
+    # ^"str" are {:tag ...}, ^[...] is {:param-tags [...]}; the entries are
+    # added to form's metadata.
+    def read_meta
+      @scanner.getch # ^
+      meta = case (value = read)
+             when Symbol, ::String then Map[{ tag: value }]
+             when ::Symbol then Map[{ value => true }]
+             when Vector then Map[{ "param-tags": value }]
+             when Map then value
+             else error("Metadata must be Symbol,Keyword,String,Vector or Map")
+             end
+      form = read
+      error("Metadata can only be applied to IMetas") unless form.is_a?(IObj)
+
+      form.with_meta(meta.reduce(form.meta || Map[]) { |merged, (key, val)| merged.assoc(key, val) })
     end
 
     # #(...) => (fn* [p1__N# ...] (...)), like Clojure's FnReader: %, %n

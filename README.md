@@ -26,7 +26,7 @@ introduced, and remove it when the gap is closed.
 
 **Reader**
 - Characters are one-character strings, as in ClojureScript: `\a` reads as `"a"`, so `(= \a "a")` is true and `(pr-str \a)` gives `"a"`
-- No metadata (`^{:doc ...}`, `^String`)
+- The reader doesn't add `:line`/`:column` metadata, and type hints (`^String`) are kept as `:tag` metadata but otherwise ignored
 - No tagged literals (`#inst`, `#uuid`)
 - Regexes are Ruby `Regexp`s, so `#"..."` uses Ruby's regex syntax (close to Java's, but not identical); there's no `re-matcher` or `re-groups`, as Ruby has no matcher objects to pass around
 - Syntax-quote is expanded by the analyzer rather than the reader, so ``'`(a b)`` yields the raw `(syntax-quote (a b))` form instead of its expansion
@@ -34,19 +34,17 @@ introduced, and remove it when the gap is closed.
 
 **Language**
 - Missing macros/forms: `defmulti`/`defmethod`, protocols and records
-- `defn-` marks its var private with a non-standard `Var#private!` call (there is no `^:private` metadata); `defn` skips attr-maps and ignores `{:pre :post}` conditions
+- `defn` ignores `{:pre :post}` conditions
 - `case` is a linear chain of `=` tests (no constant-time dispatch or duplicate-constant check)
-- Macros are flagged with a non-standard `set-macro!` builtin instead of `:macro` metadata; `&env` maps symbols to internal `LocalBinding` objects
-- `def` discards docstrings; no metadata on vars or collections
-- No dynamic vars or `binding`
+- `&env` maps symbols to internal `LocalBinding` objects
+- Dynamic bindings aren't conveyed to other threads (there are no futures or agents): a Ruby `Thread` started inside `binding` sees root values
+- No validators or watches on vars and atoms
 - Namespaces:
-  - `*ns*` isn't a dynamic var: `in-ns` sets its root value, and loading a file restores it afterwards
-  - `ns` has no `:import` (Ruby constants are always reachable by name); namespace docstrings and attr-maps are ignored
+  - `ns` has no `:import` (Ruby constants are always reachable by name)
   - `require` only loads `.clj` files (no `.cljc`), `:reload-all` reloads just the named lib like `:reload`, and `:verbose` is ignored
 - Ruby interop:
   - Ruby collections print in Ruby format (`[1, 2]`, `{a: 1}`), and conversion is explicit (`clj->rb`/`rb->clj`); `clj->rb` turns sets into Arrays, like ClojureScript's `clj->js`
   - Ruby `Enumerable`s other than Array/Hash are seqable but not `count`able, as Java `Iterable`s aren't in Clojure (use `(count (seq x))`)
-  - `set!` only works on Ruby attributes; vars need dynamic vars and `binding`
   - no type hints (they have no use on Ruby)
 - `catch` takes a bare Ruby exception class name (looked up at top level, then in `RClojure`) or `:default`; no `Throwable`
 - Deep non-tail recursion is limited by the Ruby stack

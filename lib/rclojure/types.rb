@@ -1,7 +1,24 @@
 module RClojure
+  # Values that carry metadata, like Clojure's IObj: with_meta returns a
+  # copy with other metadata. Equality and hashing ignore it.
+  module IObj
+    def meta
+      @meta
+    end
+
+    def with_meta(meta)
+      return self if meta.equal?(@meta)
+
+      copy = dup
+      copy.instance_variable_set(:@meta, meta)
+      copy.freeze
+    end
+  end
+
   # A Clojure symbol, optionally namespace-qualified: `foo`, `clojure.core/map`.
   # Keywords are not represented here; they map to plain Ruby Symbols.
   class Symbol
+    include IObj
     attr_reader :ns, :name
 
     def self.parse(text)
@@ -36,10 +53,11 @@ module RClojure
 
     # Marshal support (for the core cache) restores frozen values.
     def marshal_dump
-      [@ns, @name]
+      [@ns, @name, @meta]
     end
 
-    def marshal_load((ns, name))
+    def marshal_load((ns, name, meta))
+      @meta = meta
       initialize(ns, name)
     end
   end
@@ -109,6 +127,7 @@ module RClojure
   # A counted singly-linked list, like Clojure's PersistentList.
   class List
     include ISeq
+    include IObj
 
     attr_reader :size
 
@@ -190,10 +209,11 @@ module RClojure
     end
 
     def marshal_dump
-      to_a
+      [to_a, @meta]
     end
 
-    def marshal_load(items)
+    def marshal_load((items, meta))
+      @meta = meta
       initialize(items.first, List.from(items.drop(1)), items.size)
     end
   end

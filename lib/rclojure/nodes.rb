@@ -20,7 +20,12 @@ module RClojure
     VarRef = Struct.new(:var)
     # `(var x)` / `#'x`: the Var itself rather than its value.
     TheVar = Struct.new(:var)
-    Def = Struct.new(:var, :init)
+    # meta: a node for the var's new metadata, or nil for none.
+    Def = Struct.new(:var, :init, :meta, :dynamic)
+    # set! on a var (its thread binding).
+    VarAssign = Struct.new(:var, :value)
+    # A value with metadata attached, from a literal collection or fn* form.
+    WithMeta = Struct.new(:expr, :meta)
     If = Struct.new(:test, :then_branch, :else_branch)
     Do = Struct.new(:statements, :ret)
     # bindings: [[LocalBinding, node], ...], evaluated sequentially.

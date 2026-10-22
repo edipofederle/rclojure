@@ -4,6 +4,7 @@ module RClojure
   # Never empty; `create` returns nil when there would be no items.
   class RangeSeq
     include ISeq
+    include IObj
 
     def self.create(start, finish, step)
       new(start, finish, step) if in_range?(start, finish, step)

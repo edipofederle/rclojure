@@ -47,7 +47,9 @@ module RClojure
       when Nodes::Local then name(node.binding)
       when Nodes::VarRef then "#{constant(node.var)}.deref"
       when Nodes::TheVar then constant(node.var)
-      when Nodes::Def then node.init ? "#{constant(node.var)}.bind_root(#{expr(node.init)})" : constant(node.var)
+      when Nodes::Def then compile_def(node)
+      when Nodes::VarAssign then "#{constant(node.var)}.set(#{expr(node.value)})"
+      when Nodes::WithMeta then "(#{expr(node.expr)}).with_meta(#{expr(node.meta)})"
       when Nodes::If then "(#{expr(node.test)} ? (#{expr(node.then_branch)}) : (#{expr(node.else_branch)}))"
       when Nodes::Do then "(#{(node.statements.map { |s| expr(s) } << expr(node.ret)).join("\n")})"
       when Nodes::Let then "(#{bind(node.bindings)}\n#{expr(node.body)})"
@@ -160,6 +162,15 @@ module RClojure
       "->(#{params.map { |param| name(param) }.join(', ')}) {\n#{body}\n}"
     ensure
       @recur_target = outer_target
+    end
+
+    # In Clojure's order: mark dynamic, replace the metadata, bind the root.
+    def compile_def(node)
+      code = constant(node.var)
+      code += ".set_dynamic" if node.dynamic
+      code += ".set_meta(#{node.meta ? expr(node.meta) : 'nil'})"
+      code += ".bind_root(#{expr(node.init)})" if node.init
+      code
     end
 
     def compile_invoke(node)

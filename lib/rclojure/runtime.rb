@@ -22,7 +22,7 @@ module RClojure
       @load_path = load_path
 
       core = find_or_create_namespace("clojure.core")
-      @ns_var = core.intern("*ns*").bind_root(core)
+      @ns_var = core.intern("*ns*").set_dynamic.bind_root(core)
       Core.install(core, self)
       load_core(cache_dir && CoreCache.new(cache_dir))
 
@@ -31,14 +31,15 @@ module RClojure
       self.current_ns = user
     end
 
-    # The value of clojure.core/*ns*. It isn't a dynamic var (rclojure has
-    # none yet): in-ns sets its root, and loading a file restores it.
+    # The value of clojure.core/*ns*, a dynamic var. Loading a file binds
+    # it, so an in-ns there changes the binding (undone after the load);
+    # otherwise in-ns sets its root, as at the REPL.
     def current_ns
       @ns_var.deref
     end
 
     def current_ns=(namespace)
-      @ns_var.bind_root(namespace)
+      @ns_var.thread_binding ? @ns_var.set(namespace) : @ns_var.bind_root(namespace)
     end
 
     def find_namespace(name)
@@ -100,13 +101,13 @@ module RClojure
       Reader.new(source, ns_resolver: method(:auto_resolve_namespace))
     end
 
-    # Evaluates a file, restoring *ns* afterwards, as Clojure's load binds it.
+    # Evaluates a file with *ns* bound, as Clojure's load does.
     def load_file(path)
-      previous = current_ns
+      Var.push_thread_bindings(@ns_var => current_ns)
       begin
         eval_string(File.read(path))
       ensure
-        self.current_ns = previous
+        Var.pop_thread_bindings
       end
     end
 

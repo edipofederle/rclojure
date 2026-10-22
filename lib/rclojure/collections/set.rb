@@ -3,6 +3,7 @@ module RClojure
   # member to itself.
   class Set
     include Seqable
+    include IObj
     include Enumerable
 
     def self.[](*items)
@@ -70,10 +71,11 @@ module RClojure
     end
 
     def marshal_dump
-      to_a
+      [to_a, @meta]
     end
 
-    def marshal_load(items)
+    def marshal_load((items, meta))
+      @meta = meta
       initialize(items)
     end
 

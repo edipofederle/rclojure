@@ -35,9 +35,9 @@ module RClojure
       case form
       when Symbol then analyze_symbol(form, scope)
       when ISeq then form.empty? ? Nodes::Const.new(List::EMPTY) : analyze_seq(form, scope, tail)
-      when Vector then Nodes::VectorNode.new(analyze_all(form, scope))
-      when Set then Nodes::SetNode.new(analyze_all(form, scope))
-      when Map then Nodes::MapNode.new(form.map { |k, v| [analyze(k, scope), analyze(v, scope)] })
+      when Vector then with_meta(form, Nodes::VectorNode.new(analyze_all(form, scope)), scope)
+      when Set then with_meta(form, Nodes::SetNode.new(analyze_all(form, scope)), scope)
+      when Map then with_meta(form, Nodes::MapNode.new(form.map { |k, v| [analyze(k, scope), analyze(v, scope)] }), scope)
       else Nodes::Const.new(form)
       end
     end
@@ -186,13 +186,22 @@ module RClojure
       args = form.to_a.drop(1)
       if head.is_a?(Symbol) && head.ns.nil? && SPECIAL_FORMS.include?(head.name)
         method = head.name == "." ? :analyze_dot : :"analyze_#{head.name.delete('*')}"
-        return send(method, args, scope, tail)
+        node = send(method, args, scope, tail)
+        # A fn* form's metadata goes on the fn, as in Clojure.
+        return head.name == "fn*" ? with_meta(form, node, scope) : node
       end
 
       expanded = macroexpand_1(form, scope)
       return analyze(expanded, scope, tail: tail) unless expanded.equal?(form)
 
       Nodes::Invoke.new(analyze(head, scope), analyze_all(args, scope))
+    end
+
+    # Like Clojure's MetaExpr: a literal collection (or fn*) form's metadata
+    # is evaluated and attached to its value.
+    def with_meta(form, node, scope)
+      meta = form.meta
+      meta.nil? || meta.empty? ? node : Nodes::WithMeta.new(node, analyze(meta, scope))
     end
 
     # (. target method args*), (. target (method args*)) or (. target -attr).
@@ -254,9 +263,9 @@ module RClojure
           raise CompilerError, "Cannot assign to non-mutable: #{place}"
         end
 
-        # Clojure only allows set! on vars with a thread binding, and
-        # rclojure has no dynamic vars yet.
-        raise CompilerError, "Can't change/establish root binding of: #{resolve_var(place)} with set"
+        # Changes the var's thread binding; it's an error, when run, if
+        # there's none.
+        Nodes::VarAssign.new(resolve_var(place), analyze(value, scope))
       when ISeq
         call = analyze(place, scope)
         unless call.is_a?(Nodes::HostCall) && call.args.empty? && call.block.nil? && call.method != :new
@@ -283,6 +292,10 @@ module RClojure
                args[2]
              else raise CompilerError, "Too many arguments to def"
              end
+      # Like Clojure, the var's metadata is replaced by the name's (with a
+      # docstring as :doc), evaluated; :dynamic also marks it dynamic.
+      meta = name.meta || Map[]
+      meta = meta.assoc(:doc, args[1]) if args.size == 3
 
       # Interned before analyzing init, so the init can refer to the var
       # itself (e.g. a recursive function).
@@ -290,7 +303,7 @@ module RClojure
       init_node = args.size == 1 ? nil : analyze(init, scope)
       # Unnamed fns take the var's name, for error messages and printing.
       init_node.name = var.to_s.delete_prefix("#'") if init_node.is_a?(Nodes::FnNode) && init_node.name.nil?
-      Nodes::Def.new(var, init_node)
+      Nodes::Def.new(var, init_node, meta.empty? ? nil : analyze(meta, scope), RClojure.truthy?(meta[:dynamic]))
     end
 
     def analyze_if(args, scope, tail)

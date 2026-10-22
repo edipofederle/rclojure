@@ -6,36 +6,47 @@
 
 ;;; Bootstrap: defmacro, fn, defn, let
 
-(def defmacro
+;; As in Clojure, a macro is a var with :macro metadata. A docstring or
+;; attr-map before the sigs goes into the var's metadata too.
+(def ^:macro defmacro
   (fn* defmacro [&form &env name & decl]
-    (let* [decl (if (string? (first decl)) (next decl) decl)
+    (let* [m (if (meta name) (meta name) {})
+           m (if (string? (first decl)) (assoc m :doc (first decl)) m)
+           decl (if (string? (first decl)) (next decl) decl)
+           m (if (map? (first decl)) (conj m (first decl)) m)
+           decl (if (map? (first decl)) (next decl) decl)
            sigs (if (vector? (first decl)) (list decl) decl)
            ;; every macro arity takes the implicit &form and &env first
            sigs (reduce (fn* [acc sig]
                           (conj acc (cons (apply vector '&form '&env (first sig)) (rest sig))))
                         []
                         sigs)]
-      `(do (def ~name (fn* ~@sigs))
-           (set-macro! (var ~name))
-           (var ~name)))))
-(set-macro! (var defmacro))
+      `(def ~(with-meta name (assoc m :macro true)) (fn* ~@sigs)))))
 
 ;; Redefined with destructuring support once `destructure` exists.
-(defmacro fn [& sigs] `(fn* ~@sigs))
+;; fn keeps the form's metadata, which the fn* form then gives the fn.
+(defmacro fn [& sigs] (with-meta `(fn* ~@sigs) (meta &form)))
 (defmacro let [bindings & body] `(let* ~bindings ~@body))
 (defmacro loop [bindings & body] `(loop* ~bindings ~@body))
 
+;; Like Clojure's: the name's metadata, a docstring (:doc), an attr-map and
+;; the sigs' params (:arglists) become the var's metadata.
 (defmacro defn [name & decl]
-  (let [decl (if (string? (first decl)) (next decl) decl)
-        decl (if (map? (first decl)) (next decl) decl)]
-    `(def ~name (fn ~@decl))))
+  (let [m (if (meta name) (meta name) {})
+        m (if (string? (first decl)) (assoc m :doc (first decl)) m)
+        decl (if (string? (first decl)) (next decl) decl)
+        m (if (map? (first decl)) (conj m (first decl)) m)
+        decl (if (map? (first decl)) (next decl) decl)
+        sigs (if (vector? (first decl)) (list decl) decl)
+        arglists (apply list (reduce (fn* [acc sig] (conj acc (first sig))) [] sigs))
+        m (conj {:arglists (list 'quote arglists)} m)]
+    `(def ~(with-meta name m) (fn ~@decl))))
 
-;; Marks the var private with the non-standard Var#private!, since there's
-;; no metadata (^:private) yet.
 (defmacro defn- [name & decl]
-  `(do (defn ~name ~@decl)
-       (.private! (var ~name))
-       (var ~name)))
+  `(defn ~(with-meta name (assoc (meta name) :private true)) ~@decl))
+
+(defn vary-meta [obj f & args]
+  (with-meta obj (apply f (meta obj) args)))
 
 ;;; Lazy seqs
 
@@ -249,9 +260,8 @@
         decl (if name (next decl) decl)
         sigs (if (vector? (first decl)) (list decl) decl)
         sigs (reduce (fn* [acc sig] (conj acc (destructure-sig sig))) [] sigs)]
-    (if name
-      `(fn* ~name ~@sigs)
-      `(fn* ~@sigs))))
+    (with-meta (if name `(fn* ~name ~@sigs) `(fn* ~@sigs))
+               (meta &form))))
 
 ;;; More macros
 
@@ -290,6 +300,21 @@
 
 (defmacro while [test & body]
   `(loop [] (when ~test ~@body (recur))))
+
+(defmacro binding [bindings & body]
+  (check-bindings "binding" bindings)
+  (let [var-ize (fn [var-vals]
+                  (loop [ret [] vvs (seq var-vals)]
+                    (if vvs
+                      (recur (conj (conj ret `(var ~(first vvs))) (second vvs))
+                             (next (next vvs)))
+                      (seq ret))))]
+    `(let []
+       (push-thread-bindings (hash-map ~@(var-ize bindings)))
+       (try
+         ~@body
+         (finally
+           (pop-thread-bindings))))))
 
 (defmacro dotimes [bindings & body]
   (check-bindings "dotimes" bindings)
@@ -743,6 +768,25 @@
     (assoc m k (apply update-in (get m k) ks f args))
     (assoc m k (apply f (get m k) args))))
 
+;;; Vars
+
+(defn with-redefs-fn [binding-map func]
+  (let [root-bind (fn [m]
+                    (doseq [[a-var a-val] m]
+                      (.bind-root a-var a-val)))
+        old-vals (zipmap (keys binding-map)
+                         (map #(.root %) (keys binding-map)))]
+    (try
+      (root-bind binding-map)
+      (func)
+      (finally
+        (root-bind old-vals)))))
+
+(defmacro with-redefs [bindings & body]
+  `(with-redefs-fn ~(zipmap (map #(list `var %) (take-nth 2 bindings))
+                            (take-nth 2 (next bindings)))
+     (fn [] ~@body)))
+
 ;;; Namespaces and libs
 ;;
 ;; Ported from Clojure's core.clj. Libs are found on the Runtime's load
@@ -751,10 +795,8 @@
 ;; reloads only the named lib, like :reload.
 
 ;; clojure.core counts as loaded: it isn't on the load path to be found.
-(def *loaded-libs* (atom #{'clojure.core}))
-(.private! (var *loaded-libs*))
-(def *pending-paths* (atom ()))
-(.private! (var *pending-paths*))
+(def ^:private *loaded-libs* (atom #{'clojure.core}))
+(def ^:private *pending-paths* (atom ()))
 
 (defn loaded-libs [] @*loaded-libs*)
 
@@ -765,11 +807,17 @@
   (let [process-reference (fn [[kname & args]]
                             `(~(symbol "clojure.core" (clojure.core/name kname))
                               ~@(map (fn [arg] (list 'quote arg)) args)))
-        references (if (string? (first references)) (next references) references)
-        references (if (map? (first references)) (next references) references)
-        references (remove (fn [r] (= :gen-class (first r))) references)]
+        docstring (when (string? (first references)) (first references))
+        references (if docstring (next references) references)
+        attr-map (when (map? (first references)) (first references))
+        references (if attr-map (next references) references)
+        references (remove (fn [r] (= :gen-class (first r))) references)
+        ;; the namespace's metadata: the name's, :doc and the attr-map
+        metadata (merge (meta name) (when docstring {:doc docstring}) attr-map)]
     `(do
        (clojure.core/in-ns '~name)
+       ~@(when (seq metadata)
+           `((clojure.core/reset-meta! (clojure.core/the-ns '~name) ~metadata)))
        ~@(when (and (not= name 'clojure.core)
                     (not-any? (fn [r] (= :refer-clojure (first r))) references))
            `((clojure.core/refer '~'clojure.core)))

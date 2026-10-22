@@ -58,7 +58,7 @@ module RClojure
 
         define.("load-file", ->(path) { runtime.load_file(path) })
         # Used by load in core.clj, like Clojure's RT.load.
-        Core.define(ns, "load-resource", ->(resource) { runtime.load_resource(resource) }).private!
+        Core.define(ns, "load-resource", ->(resource) { runtime.load_resource(resource) }).set_meta(Map[{ private: true }])
       end
 
       def the_ns(runtime, x)

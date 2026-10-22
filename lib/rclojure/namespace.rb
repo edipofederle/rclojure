@@ -1,12 +1,46 @@
 module RClojure
-  # A namespace-level mutable reference, created by `def`.
+  # A namespace-level mutable reference, created by `def`. Like Clojure's
+  # Var: its metadata (always with :ns and :name) says whether it's a
+  # :macro or :private, and a dynamic var can be rebound per thread with
+  # `binding`, which pushes a Frame of bindings onto a per-thread stack.
   class Var
-    attr_reader :ns, :name
+    Frame = Struct.new(:bindings, :prev)
+    Box = Struct.new(:value)
+
+    attr_reader :ns, :name, :meta
+
+    def self.frame
+      Thread.current.thread_variable_get(:rclojure_bindings)
+    end
+
+    # bindings: {Var => value}. Each new frame holds all the bindings in
+    # force, so a lookup checks just the top one.
+    def self.push_thread_bindings(bindings)
+      frame = self.frame
+      boxes = frame ? frame.bindings.dup : {}.compare_by_identity
+      bindings.each do |var, value|
+        raise Error, "Can't dynamically bind non-dynamic var: #{var.ns.name}/#{var.name}" unless var.dynamic?
+
+        var.thread_bound!
+        boxes[var] = Box.new(value)
+      end
+      Thread.current.thread_variable_set(:rclojure_bindings, Frame.new(boxes, frame))
+      nil
+    end
+
+    def self.pop_thread_bindings
+      frame = self.frame or raise Error, "Pop without matching push"
+      Thread.current.thread_variable_set(:rclojure_bindings, frame.prev)
+      nil
+    end
 
     def initialize(ns, name)
       @ns = ns
       @name = name.freeze
       @bound = false
+      @dynamic = false
+      @thread_bound = false
+      set_meta(nil)
     end
 
     def bind_root(value)
@@ -16,33 +50,65 @@ module RClojure
     end
 
     def bound?
-      @bound
+      @bound || !thread_binding.nil?
+    end
+
+    # The root value, ignoring any thread binding.
+    def root
+      @root
+    end
+
+    # Replaces the metadata, keeping :ns and :name (Clojure's setMeta).
+    def set_meta(meta)
+      @meta = (meta || Map[]).assoc(:name, Symbol.new(nil, @name)).assoc(:ns, @ns)
+      self
+    end
+
+    def reset_meta(meta)
+      @meta = meta
     end
 
     def macro?
-      @macro
+      RClojure.truthy?(@meta[:macro])
     end
 
-    def macro!
-      @macro = true
-      self
-    end
-
-    # Set by defn-; private vars aren't referred, and can't be named from
-    # other namespaces (except through `var`).
+    # Private vars aren't referred, and can't be named from other
+    # namespaces (except through `var`).
     def private?
-      @private
+      RClojure.truthy?(@meta[:private])
     end
 
-    def private!
-      @private = true
+    def dynamic?
+      @dynamic
+    end
+
+    # Set by `def` when the name has :dynamic metadata; never unset, as in Clojure.
+    def set_dynamic
+      @dynamic = true
       self
+    end
+
+    def thread_bound!
+      @thread_bound = true
+    end
+
+    def thread_binding
+      @thread_bound ? Var.frame&.bindings&.[](self) : nil
     end
 
     def deref
+      if @thread_bound && (box = thread_binding)
+        return box.value
+      end
       raise Error, "Attempting to use unbound var: #{self}" unless @bound
 
       @root
+    end
+
+    # set! on a var: changes its thread binding; there must be one.
+    def set(value)
+      box = thread_binding or raise Error, "Can't change/establish root binding of: #{@name} with set"
+      box.value = value
     end
 
     # Vars are callable, delegating to their value: `(#'f 1)`.
@@ -74,12 +140,17 @@ module RClojure
   # Like Clojure's Namespace: mappings from names to Vars (its own, plus
   # those referred from other namespaces) and aliases to other namespaces.
   class Namespace
-    attr_reader :name
+    attr_reader :name, :meta
 
     def initialize(name)
       @name = name.freeze
       @mappings = {}
       @aliases = {}
+      @meta = nil
+    end
+
+    def reset_meta(meta)
+      @meta = meta
     end
 
     # Returns this namespace's var for `name`, creating it if needed. As in

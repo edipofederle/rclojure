@@ -2,6 +2,7 @@ module RClojure
   # A seq of first followed by more (an ISeq or nil), as built by `cons`.
   class Cons
     include ISeq
+    include IObj
 
     def initialize(first, more)
       @first = first

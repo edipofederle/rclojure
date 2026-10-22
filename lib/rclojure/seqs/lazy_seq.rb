@@ -4,6 +4,7 @@ module RClojure
   # seqable value (including another LazySeq) and is cached.
   class LazySeq
     include ISeq
+    include IObj
 
     def initialize(fn)
       @fn = fn
@@ -13,6 +14,13 @@ module RClojure
 
     def realized?
       @fn.nil?
+    end
+
+    # Like ClojureScript's: a new lazy seq of this one's items, so the body
+    # still runs only once.
+    def with_meta(meta)
+      original = self
+      LazySeq.new(-> { original.seq }).tap { |copy| copy.instance_variable_set(:@meta, meta) }
     end
 
     def seq

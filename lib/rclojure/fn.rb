@@ -3,6 +3,7 @@ module RClojure
   # one variadic callable taking the required args and then the rest as a
   # seq (or nil).
   class Fn
+    include IObj
     attr_reader :name
 
     def initialize(name, fixed, required = nil, variadic = nil)
@@ -57,6 +58,7 @@ module RClojure
   # counts (0-3) to lambdas taking exactly that many args, used by callN;
   # impl itself is one when its arity is fixed.
   class Builtin
+    include IObj
     attr_reader :name
 
     def initialize(name, impl, fast = {})

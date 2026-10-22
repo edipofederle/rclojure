@@ -3,6 +3,7 @@ module RClojure
   # on vectors, sets, maps and Ruby collections, and variadic fn args.
   class ArraySeq
     include ISeq
+    include IObj
 
     def initialize(array, index)
       @array = array
