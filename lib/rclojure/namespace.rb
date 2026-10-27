@@ -116,6 +116,10 @@ module RClojure
       RClojure.invoke(deref, args)
     end
 
+    def to_proc
+      method(:call).to_proc
+    end
+
     def to_s
       "#'#{ns.name}/#{name}"
     end

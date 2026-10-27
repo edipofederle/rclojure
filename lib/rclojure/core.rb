@@ -37,7 +37,10 @@ module RClojure
     case coll
     when Map then coll.key?(key) ? coll[key] : default
     when Set then coll.include?(key) ? key : default
-    when Vector, ::String then key.is_a?(Integer) && key.between?(0, coll.size - 1) ? coll[key] : default
+    when Vector, ::String, Array then key.is_a?(Integer) && key.between?(0, coll.size - 1) ? coll[key] : default
+    # Ruby's Hash and Set, as Clojure's get works on java.util.Map and Set.
+    when Hash then coll.fetch(key, default)
+    when ::Set then coll.include?(key) ? key : default
     else default
     end
   end

@@ -151,6 +151,14 @@ class TestInterop < Minitest::Test
     assert_ev List[1, 2], "(seq (Set/new [1 2]))"
   end
 
+  # As Clojure's get and contains? work on java.util.Map, Set and arrays.
+  def test_get_and_contains_on_ruby_collections
+    assert_ev Vector[1, :nf, true, false], "(let [h (clj->rb {:a 1})] [(get h :a) (get h :b :nf) (contains? h :a) (contains? h :b)])"
+    assert_ev Vector[2, nil, true, false], "(let [a (clj->rb [1 2])] [(get a 1) (get a 2) (contains? a 1) (contains? a 2)])"
+    assert_ev Vector[1, nil, true], "(let [s (Set/new (clj->rb [1]))] [(get s 1) (get s 2) (contains? s 1)])"
+    assert_ev 1, "(:a (clj->rb {:a 1}))"
+  end
+
   class Greeting
     def to_s = "hello"
     def inspect = "#<Greeting>"

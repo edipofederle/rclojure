@@ -206,4 +206,34 @@ class TestNamespaces < Minitest::Test
   def test_unsupported_ns_clauses
     assert_raises(CompilerError) { ev("(ns imports (:import [Foo]))") }
   end
+
+  def test_requiring_ruby_libraries
+    assert_ev "{\"a\":[1,2]}", '(ns gems (:require ["json"] "digest")) (JSON/generate (clj->rb {:a [1 2]}))'
+    assert_ev 64, '(.size (Digest::SHA256/hexdigest "x"))'
+    assert_ev nil, '(require "json" ["json"])'
+    assert_ev nil, '(use "json")'
+    error = assert_raises(LoadError) { ev('(require "no-such-ruby-lib")') }
+    assert_equal "cannot load such file -- no-such-ruby-lib", error.message
+    error = assert_raises(ExceptionInfo) { ev(%q{(require '["json" :as j])}) }
+    assert_equal 'A Ruby library takes no options: ["json" :as j]', error.message
+    assert_ev "caught", '(try (require "no-such-ruby-lib") (catch :default _ "caught"))'
+  end
+
+  # Outside Bundler, only Kernel#require (which RubyGems extends) can
+  # activate an installed gem; Kernel.require can't.
+  def test_requiring_installed_gems_without_bundler
+    script = <<~RUBY
+      require "rclojure"
+      rt = RClojure::Runtime.new
+      begin
+        rt.eval('(Kernel/require "rake")')
+      rescue LoadError
+        print "LoadError, "
+      end
+      print rt.eval('(require "rake") (.size (Rake::FileList/new "lib/rclojure.rb"))')
+    RUBY
+    run = -> { IO.popen([RbConfig.ruby, "-I", File.expand_path("../lib", __dir__), "-e", script], err: File::NULL, &:read) }
+    output = defined?(Bundler) ? Bundler.with_unbundled_env(&run) : run.()
+    assert_equal "LoadError, 1", output
+  end
 end

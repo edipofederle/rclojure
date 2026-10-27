@@ -70,12 +70,13 @@ module RClojure
       @next_id += 1
     end
 
-    # Like Clojure's Compiler.eval, a top-level `do` evaluates its forms one
-    # by one, so a form can depend on an earlier one's effects (in-ns, defmacro).
-    def eval(form)
+    # Evaluates a form (read data, not source text). Like Clojure's
+    # Compiler.eval, a top-level `do` evaluates its forms one by one, so a
+    # form can depend on an earlier one's effects (in-ns, defmacro).
+    def eval_form(form)
       form = @analyzer.macroexpand(form)
       if form.is_a?(ISeq) && form.first == Analyzer::DO
-        return form.rest.reduce(nil) { |_, subform| eval(subform) }
+        return form.rest.reduce(nil) { |_, subform| eval_form(subform) }
       end
 
       unit = Compiler.new.compile(@analyzer.analyze(form))
@@ -92,7 +93,7 @@ module RClojure
         reader.skip_whitespace
         break if reader.eof?
 
-        result = eval(reader.read)
+        result = eval_form(reader.read)
       end
       result
     end
@@ -119,6 +120,69 @@ module RClojure
       raise Error, "Could not locate #{resource}.clj on load path: #{dirs.join(File::PATH_SEPARATOR)}" unless file
 
       load_file(file)
+    end
+
+    # -- The API for Ruby programs embedding rclojure (see the README) --
+
+    # Reads and evaluates source, returning the last form's value. ns: a
+    # namespace to evaluate in (*ns* is bound to it, so an in-ns in source
+    # doesn't outlast the call); ruby: true converts the result to plain
+    # Ruby data with clj->rb, realizing lazy seqs.
+    def eval(source, ns: nil, ruby: false)
+      result = ns ? in_ns(ns) { eval_string(source) } : eval_string(source)
+      ruby ? Host.to_ruby(result) : result
+    end
+
+    # Runs the block with *ns* bound to the namespace named name, which
+    # must exist (require it, or create it with an `ns` form, first).
+    def in_ns(name)
+      namespace = find_namespace(name.to_s) or raise Error, "No namespace: #{name} found"
+      Var.push_thread_bindings(@ns_var => namespace)
+      begin
+        yield
+      ensure
+        Var.pop_thread_bindings
+      end
+    end
+
+    # Like (require 'a.b 'c.d): libs named by strings or symbols.
+    def require(*names)
+      libs = names.map { |name| name.is_a?(Symbol) ? name : Symbol.parse(name.to_s) }
+      var("clojure.core/require").call(*libs)
+    end
+
+    # The var named "ns/name", requiring its namespace first if it isn't
+    # loaded yet (like requiring-resolve). Vars are callable, and see
+    # their var being redefined.
+    def var(name)
+      name = Symbol.parse(name.to_s) unless name.is_a?(Symbol)
+      raise ArgumentError, "Var name must be namespace-qualified: #{name}" unless name.ns
+
+      require(Symbol.new(nil, name.ns)) unless find_namespace(name.ns)
+      find_namespace(name.ns).own_var(name.name) or raise Error, "No such var: #{name}"
+    end
+
+    # The var named "ns/name" (see #var), checking that it holds a function.
+    def fn(name)
+      var = var(name)
+      raise Error, "#{var} is a macro, not a function" if var.macro?
+      raise Error, "#{var} is not a function: #{Printer.pr_str(var.deref)}" unless var.deref.respond_to?(:call)
+
+      var
+    end
+
+    # Defines a function in Clojure, implemented in Ruby: (define
+    # "my.ns/f") { |x| ... }, or with a callable instead of the block (a
+    # lambda checks its arity; a block, like any Ruby block, sets missing
+    # args to nil). The namespace is created if needed. Returns the var.
+    def define(name, callable = nil, &block)
+      impl = callable || block or raise ArgumentError, "define needs a block or a callable"
+      name = Symbol.parse(name.to_s) unless name.is_a?(Symbol)
+      raise ArgumentError, "Var name must be namespace-qualified: #{name}" unless name.ns
+
+      impl = impl.method(:call) unless impl.respond_to?(:parameters)
+      var = find_or_create_namespace(name.ns).intern(name.name)
+      var.bind_root(Builtin.new(name.to_s, impl))
     end
 
     # Runs core.clj's cached compiled code if there is any, else loads it

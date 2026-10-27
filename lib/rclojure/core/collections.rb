@@ -152,9 +152,9 @@ module RClojure
       def contains?(coll, key)
         case coll
         when nil then false
-        when Map then coll.key?(key)
-        when Set then coll.include?(key)
-        when Vector then key.is_a?(Integer) && key.between?(0, coll.size - 1)
+        when Map, Hash then coll.key?(key)
+        when Set, ::Set then coll.include?(key)
+        when Vector, Array then key.is_a?(Integer) && key.between?(0, coll.size - 1)
         else raise ArgumentError, "contains? not supported on type: #{coll.class.name}"
         end
       end

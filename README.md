@@ -49,12 +49,14 @@ introduced, and remove it when the gap is closed.
 - Namespaces:
   - `ns` has no `:import` (Ruby constants are always reachable by name)
   - `require` only loads `.clj` files (no `.cljc`), `:reload-all` reloads just the named lib like `:reload`, and `:verbose` is ignored
+  - a string libspec (`"json"`) loads a Ruby library once, like Ruby's `require`: it takes no options, and `:reload` doesn't reload it
 - Ruby interop:
   - Ruby collections print in Ruby format (`[1, 2]`, `{a: 1}`), and conversion is explicit (`clj->rb`/`rb->clj`); `clj->rb` turns sets into Arrays, like ClojureScript's `clj->js`
   - Ruby `Enumerable`s other than Array/Hash are seqable but not `count`able, as Java `Iterable`s aren't in Clojure (use `(count (seq x))`)
   - no type hints (they have no use on Ruby)
 - `catch` takes a bare Ruby exception class name (looked up at top level, then in `RClojure`) or `:default`; no `Throwable`
 - Deep non-tail recursion is limited by the Ruby stack
+- Embedding: a `Runtime` isn't safe for loading or defining code from several Ruby threads at once (calling already-loaded functions from several threads is fine); Ruby arguments aren't converted, so pass `RClojure.from_ruby(x)` where rclojure data is needed
 
 **Data**
 - No transients (`transient`, `persistent!`, `conj!`, ...), sorted collections (`sorted-map`, `sorted-set`) or `subvec`
@@ -91,6 +93,49 @@ reading, macroexpanding and compiling it. Set `RCLOJURE_CACHE_DIR` to use anothe
 directory, or to an empty value to turn the cache off. The cache is
 keyed by a digest of rclojure's sources, so changes invalidate it.
 
+## Using rclojure from Ruby
+
+```ruby
+require "rclojure"
+
+rt = RClojure::Runtime.new(load_path: ["src"])  # load_path defaults to RCLOJURE_PATH
+rt.eval("(+ 1 2)")                               # => 3
+rt.eval("{:a (map inc [1 2])}", ruby: true)      # => {a: [2, 3]}, via clj->rb
+rt.eval("(greet \"bob\")", ns: "my-app.core")   # evaluate in a namespace
+rt.require("my-app.core")                        # like (require 'my-app.core)
+rt.var("my-app.core/config").deref               # a Var (its namespace is required if needed)
+greet = rt.fn("my-app.core/greet")               # a Var holding a function
+greet.("bob")                                    # => "hello bob"
+%w[a b].map(&rt.fn("clojure.string/upper-case")) # => ["A", "B"]
+
+# Clojure functions written in Ruby (a block, or anything callable).
+rt.define("my.helpers/shout") { |s| "#{s.upcase}!" }
+rt.eval('(my.helpers/shout "hi")')               # => "HI!"
+
+RClojure.eval("(map inc [1 2 3])")               # a shared runtime, created on first use
+RClojure.to_ruby(RClojure.eval("[1 {:a 2}]"))   # => [1, {a: 2}]: clj->rb (from_ruby is rb->clj)
+```
+
+- **Values:** results are rclojure values (see [Value mapping](#value-mapping)),
+  and lazy seqs come back unrealized; `ruby: true` converts the result to
+  Hashes and Arrays (realizing seqs). Arguments are passed through as
+  they are: `get`, `contains?`, `seq` and friends work on Ruby Hashes,
+  Arrays and Enumerables, and `RClojure.from_ruby` converts them when you
+  need rclojure data (to `conj` onto, say).
+- **Namespaces:** `eval` runs in the runtime's current namespace (`user`
+  to begin with) unless given `ns:`, which binds `*ns*` for that call
+  only; `rt.in_ns("my-app.core") { ... }` does the same for a block.
+- **Errors:** everything rclojure raises is an `RClojure::Error`:
+  `ReaderError` (with `#line` and `#column`), `CompilerError`,
+  `ArityError` and `ExceptionInfo` (`ex-info`, with `#data`). Errors from
+  Ruby code (`ZeroDivisionError`, `NoMethodError`, `LoadError`, ...)
+  propagate unchanged.
+- **Runtimes** are independent of each other: each has its own
+  namespaces. Load code into a runtime from one thread at a time.
+
+[`examples/embedding.rb`](examples/embedding.rb) puts it together:
+`ruby -Ilib examples/embedding.rb`.
+
 ## Namespaces
 
 rclojure ships `clojure.string` and `clojure.set`: `(require '[clojure.string :as str])`.
@@ -99,9 +144,15 @@ rclojure ships `clojure.string` and `clojure.set`: `(require '[clojure.string :a
 directories on the load path: `RCLOJURE_PATH` (separated like `PATH`),
 or the current directory when unset.
 
+A string libspec requires a Ruby library through RubyGems (and Bundler,
+under `bundle exec`), as ClojureScript's `require` takes JavaScript
+packages by string. Ruby libraries only define constants, so it takes no
+options.
+
 ```clojure
 (ns my-app.core
-  (:require [my-app.util :as u :refer [shout]]))
+  (:require [my-app.util :as u :refer [shout]]
+            ["json"]))      ; Ruby's require "json"
 
 (defn- helper [] ::done) ; private; ::done is :my-app.core/done
 (u/whisper (shout "hi"))
@@ -185,6 +236,12 @@ Math/PI                            ; Math::PI
 (defmulti kind class)              ; so multimethods can dispatch on them
 (clj->rb {:a [1 2]})               ; {a: [1, 2]}; rb->clj goes back
 (take 3 (Range/new 1 nil))         ; Ruby Enumerables are lazily seqable
+(get (clj->rb {:a 1}) :a)          ; get and contains? work on Hashes, Arrays and Sets
+
+(require "rake")                   ; any installed gem, also from (ns (:require ["rake"]))
+(Rake::FileList/new "lib/**/*.rb")
+(require "json")
+(JSON/generate (clj->rb {:a [1 2]})) ; "{\"a\":[1,2]}"
 ```
 
 The value after `&` becomes the block the way Ruby's `&` does, via

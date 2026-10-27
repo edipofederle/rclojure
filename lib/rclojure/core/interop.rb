@@ -26,6 +26,8 @@ module RClojure
         })
         define.("clj->rb", ->(x) { Host.to_ruby(x) })
         define.("rb->clj", ->(x) { Host.from_ruby(x) })
+        # Used by require in core.clj for string libspecs.
+        Core.define(ns, "require-ruby", ->(name) { Host.require_library(name) }).set_meta(Map[{ private: true }])
       end
     end
   end

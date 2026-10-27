@@ -36,4 +36,26 @@ module RClojure
   def self.pr_str(value)
     Printer.pr_str(value)
   end
+
+  @runtime_lock = Mutex.new
+
+  # A Runtime shared by RClojure.eval and friends, created on first use.
+  def self.runtime
+    @runtime || @runtime_lock.synchronize { @runtime ||= Runtime.new }
+  end
+
+  # RClojure.eval("(+ 1 2)"): Runtime#eval on the shared runtime.
+  def self.eval(source, **options)
+    runtime.eval(source, **options)
+  end
+
+  # clj->rb: rclojure collections to Ruby Hashes and Arrays, recursively.
+  def self.to_ruby(value)
+    Host.to_ruby(value)
+  end
+
+  # rb->clj: Ruby Hashes and Arrays to rclojure maps and vectors, recursively.
+  def self.from_ruby(value)
+    Host.from_ruby(value)
+  end
 end

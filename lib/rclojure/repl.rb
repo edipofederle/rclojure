@@ -55,9 +55,9 @@ module RClojure
 
     # Returns false when evaluation failed, so later forms on the same line are skipped.
     def eval_and_print(form)
-      puts Printer.pr_str(@runtime.eval(form))
+      puts Printer.pr_str(@runtime.eval_form(form))
       true
-    rescue StandardError, SystemStackError => e
+    rescue StandardError, ScriptError, SystemStackError => e
       warn REPL.describe_error(e)
       false
     end

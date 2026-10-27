@@ -7,7 +7,7 @@ if ARGV.empty?
 else
   begin
     RClojure::Runtime.new.load_file(ARGV.first)
-  rescue StandardError, SystemStackError => e
+  rescue StandardError, ScriptError, SystemStackError => e
     warn RClojure::REPL.describe_error(e)
     exit 1
   end

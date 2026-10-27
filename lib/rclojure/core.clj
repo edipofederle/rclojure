@@ -1061,6 +1061,10 @@
 ;; path. *loaded-libs* and *pending-paths* are atoms, since rclojure has no
 ;; refs or dynamic vars; :verbose is accepted but ignored, and :reload-all
 ;; reloads only the named lib, like :reload.
+;;
+;; As ClojureScript does for JavaScript packages, a string libspec ("json",
+;; or ["json"]) names a Ruby library, loaded with Ruby's require (through
+;; RubyGems). It only defines Ruby constants, so it takes no options.
 
 ;; clojure.core counts as loaded: it isn't on the load path to be found.
 (def ^:private *loaded-libs* (atom #{'clojure.core}))
@@ -1172,6 +1176,15 @@
     (when (or use (:refer filter-opts))
       (apply refer lib (mapcat seq filter-opts)))))
 
+(defn- ruby-libspec? [x]
+  (or (string? x)
+      (and (vector? x) (string? (first x)))))
+
+(defn- load-ruby-lib [spec]
+  (throw-if (and (vector? spec) (next spec))
+            "A Ruby library takes no options: " (pr-str spec))
+  (require-ruby (if (vector? spec) (first spec) spec)))
+
 (defn- load-libs [& args]
   (let [flags (filter keyword? args)
         opts (interleave flags (repeat true))
@@ -1182,8 +1195,10 @@
               (apply str "Unsupported option(s) supplied: " (interpose "," unsupported)))
     (throw-if (not (seq args)) "Nothing specified to load")
     (doseq [arg args]
-      (if (libspec? arg)
-        (apply load-lib nil (prependss arg opts))
+      (cond
+        (ruby-libspec? arg) (load-ruby-lib arg)
+        (libspec? arg) (apply load-lib nil (prependss arg opts))
+        :else
         (let [[prefix & args] arg]
           (throw-if (nil? prefix) "prefix cannot be nil")
           (doseq [arg args]

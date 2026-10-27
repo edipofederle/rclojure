@@ -20,6 +20,16 @@ module RClojure
       constant(name).is_a?(Module)
     end
 
+    # `(require "json")`: Ruby's require, through Kernel#require so
+    # RubyGems (or Bundler) can activate installed gems. Kernel.require,
+    # what `(Kernel/require ...)` calls, only searches $LOAD_PATH.
+    def require_library(name)
+      raise ArgumentError, "Ruby library name must be a string, got: #{Printer.pr_str(name)}" unless name.is_a?(::String)
+
+      require name
+      nil
+    end
+
     # Ruby method names can't contain '-', so (.each-slice x) calls each_slice.
     def method_name(name)
       name.tr("-", "_").to_sym

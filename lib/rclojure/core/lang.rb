@@ -43,7 +43,7 @@ module RClojure
         define.("swap!", ->(atom, fn, *args) { atom.swap(fn, args) })
 
         define.("read-string", ->(source) { Reader.read_string(source, ns_resolver: runtime.method(:auto_resolve_namespace)) })
-        define.("eval", ->(form) { runtime.eval(form) })
+        define.("eval", ->(form) { runtime.eval_form(form) })
 
         define.("meta", ->(x) { x.is_a?(IObj) || x.is_a?(Var) || x.is_a?(Namespace) ? x.meta : nil })
         define.("with-meta", lambda { |x, meta|
