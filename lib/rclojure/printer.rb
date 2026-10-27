@@ -15,17 +15,21 @@ module RClojure
       write(value, false)
     end
 
-    # Clojure's `str` of a single value.
+    # Clojure's `str` of a single value: a Ruby object the printer doesn't
+    # know gives its `to_s` (Java's toString), though inside a collection
+    # it still prints as `inspect`.
     def str(value)
       case value
       when nil then ""
       when ::String then value
       when Regexp then value.source
-      else pr_str(value)
+      else write(value, true, &:to_s)
       end
     end
 
-    def write(value, readably)
+    # The block, if given, prints `value` itself when it isn't an rclojure
+    # value (it isn't passed on to nested values).
+    def write(value, readably, &foreign)
       case value
       when nil then "nil"
       when true then "true"
@@ -46,7 +50,7 @@ module RClojure
       when Exception then "#<#{value.class} #{write(value.message, true)}>"
       when Regexp then "#\"#{value.source}\""
       when Class, Module then value.name
-      else value.inspect
+      else foreign ? foreign.(value) : value.inspect
       end
     end
 

@@ -150,4 +150,19 @@ class TestInterop < Minitest::Test
     assert_ev "a", '(first (.each-char "abc"))'
     assert_ev List[1, 2], "(seq (Set/new [1 2]))"
   end
+
+  class Greeting
+    def to_s = "hello"
+    def inspect = "#<Greeting>"
+  end
+
+  def test_str_of_ruby_objects_uses_to_s
+    require "date"
+    assert_ev "2026-11-22", "(str (Date/new 2026 11 22))"
+    assert_ev "1970-01-01 00:00:00 UTC", "(str (.utc (Time/at 0)))"
+    assert_ev "hello!", '(str (TestInterop::Greeting/new) "!")'
+    assert_ev "[#<Greeting>]", "(str [(TestInterop::Greeting/new)])"
+    assert_ev "#<Greeting>", "(pr-str (TestInterop::Greeting/new))"
+    assert_ev "[1 \"a\"]:k", '(str [1 "a"] :k)'
+  end
 end
