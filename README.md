@@ -33,7 +33,14 @@ introduced, and remove it when the gap is closed.
 - Floats with an `M` suffix are read as `Float`, not `BigDecimal`
 
 **Language**
-- No protocols, types or records (`defprotocol`, `deftype`, `defrecord`, `reify`)
+- Protocols, types and records:
+  - as in ClojureScript, `deftype` and `defrecord` def a var holding the class (refer to it from other namespaces like any var, not with `:import`); there's no `definterface`, `proxy` or `gen-class`, and no `deftype`/`defrecord` options (`:load-ns`, `:no-print`)
+  - a protocol is an `RClojure::Protocol` object, not a map, so `(:sigs P)` and the like give nil, and redefining a protocol's fn doesn't warn
+  - a type's protocol methods are Ruby methods with protocol-qualified names (so they can't replace Ruby's own, such as `hash`): call them through the protocol fns, not `(.method x)`
+  - extensions are looked up along the class's Ruby ancestors, so a class's modules and superclasses take part in the order Ruby resolves methods in
+  - an unknown method or bad spec in a `deftype` is an error when the form runs, not when it's compiled
+  - records print as `#user.R{:a 1}`, also through `str` (Clojure gives `user.R@<hash>`), but the reader can't read record literals back
+  - a record field named like one of `Map`'s Ruby methods (`count`, `keys`, ...) gets no `(.-field r)` reader; use `(:field r)`
 - `defn` ignores `{:pre :post}` conditions
 - `case` is a linear chain of `=` tests (no constant-time dispatch or duplicate-constant check)
 - `&env` maps symbols to internal `LocalBinding` objects
@@ -115,6 +122,44 @@ or the current directory when unset.
 | other seqs | `RClojure::Cons` / `LazySeq` / `ArraySeq` (all include `RClojure::ISeq`) |
 | functions | `RClojure::Fn` (rclojure) / `RClojure::Builtin` (Ruby); anything with `#call` is invocable |
 | exceptions | Ruby exceptions; `ex-info` creates `RClojure::ExceptionInfo` |
+| protocols | `RClojure::Protocol` |
+| `deftype` / `defrecord` / `reify` | subclasses of `RClojure::Type` / `Record` (a `Map`) / `Reified` |
+
+## Protocols, types and records
+
+```clojure
+(defprotocol Shape
+  (area [s])
+  (scale [s k]))
+
+(defrecord Rect [w h]
+  Shape
+  (area [_] (* w h))
+  (scale [this k] (assoc this :w (* w k) :h (* h k))))
+
+(extend-protocol Shape
+  nil     (area [_] 0)
+  Numeric (area [n] (* n n)))   ; classes and modules: Integer and Float match
+
+(area (scale (->Rect 2 3) 2))  ; 24
+(:w (map->Rect {:w 1 :h 2}))   ; records are maps
+
+(deftype Counter [^:unsynchronized-mutable n]
+  Object                        ; Object (or a Ruby module) for plain Ruby methods
+  (inc! [this] (set! n (inc n)) this)
+  (to_s [_] (str "counter " n)))
+
+(deftype Bag [items]
+  Enumerable                    ; Ruby modules are included
+  (each [this & f]              ; `& f` binds the method's Ruby block
+    (doseq [i items] (f i))))
+(.map (Bag. [1 2]) & inc)       ; [2, 3]
+```
+
+Each `deftype`, `defrecord` and `reify` form makes a Ruby class whose
+methods are Ruby methods: `this` is `self` and fields are instance
+variables. Protocol methods are dispatched on the class's ancestors, so
+extending a protocol to a module covers every class that includes it.
 
 ## Ruby interop
 

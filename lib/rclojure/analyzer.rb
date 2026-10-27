@@ -1,7 +1,7 @@
 module RClojure
   # Turns forms into Nodes, resolving symbols and validating special forms.
   class Analyzer
-    SPECIAL_FORMS = %w[def if do let* letfn* loop* recur fn* quote var throw try . new set!].freeze
+    SPECIAL_FORMS = %w[def if do let* letfn* loop* recur fn* quote var throw try . new set! deftype*].freeze
     DOT = Symbol.new(nil, ".")
     NEW = Symbol.new(nil, "new")
     DO = Symbol.new(nil, "do")
@@ -226,15 +226,27 @@ module RClojure
       host_call(analyze(target, scope), Host.method_name(member.name), call_args, scope)
     end
 
-    # (new Class args*), with an optional `& f` block like `.` calls.
+    # (new Class args*), with an optional `& f` block like `.` calls. Class
+    # is a Ruby class name, a var holding a class (deftype and defrecord
+    # define one, as ClojureScript's do) or a class itself (from reify).
     def analyze_new(args, scope, _tail)
-      class_name = args.first
-      klass = class_name.is_a?(Symbol) ? host_constant(class_name) : Host::NOT_FOUND
-      unless klass.is_a?(Class)
-        raise CompilerError, "Unable to resolve classname: #{Printer.pr_str(class_name)}"
+      host_call(class_node(args.first, scope), :new, args.drop(1), scope)
+    end
+
+    def class_node(class_name, scope)
+      return Nodes::Const.new(class_name) if class_name.is_a?(Class)
+
+      if class_name.is_a?(Symbol) && !(class_name.ns.nil? && scope.locals.key?(class_name.name))
+        if (var = lookup_var(class_name))
+          check_public(var)
+          return Nodes::VarRef.new(var)
+        end
+
+        klass = host_constant(class_name)
+        return Nodes::Const.new(klass) if klass.is_a?(Class)
       end
 
-      host_call(Nodes::Const.new(klass), :new, args.drop(1), scope)
+      raise CompilerError, "Unable to resolve classname: #{Printer.pr_str(class_name)}"
     end
 
     def host_call(target_node, method, call_args, scope)
@@ -259,8 +271,10 @@ module RClojure
       place, value = args
       case place
       when Symbol
-        if place.ns.nil? && scope.locals.key?(place.name)
-          raise CompilerError, "Cannot assign to non-mutable: #{place}"
+        if place.ns.nil? && (binding = scope.locals[place.name])
+          raise CompilerError, "Cannot assign to non-mutable: #{place}" unless binding.is_a?(FieldBinding) && binding.mutable
+
+          return Nodes::LocalAssign.new(binding, analyze(value, scope))
         end
 
         # Changes the var's thread binding; it's an error, when run, if
@@ -455,6 +469,63 @@ module RClojure
       return unless variadic.any? && fixed.any? { |m| m.required > variadic.first.required }
 
       raise CompilerError, "Can't have fixed arity function with more params than variadic function"
+    end
+
+    # (deftype* "ns.Name" kind [fields*] [specs*] (name [this params*] body*)*)
+    #
+    # Like Clojure's, the methods aren't closures: they see the fields
+    # (mutable ones have :unsynchronized-mutable or :volatile-mutable
+    # metadata) and their params. deftype, defrecord and reify expand to it.
+    def analyze_deftype(args, scope, _tail)
+      tag, kind, fields, specs, *method_forms = args
+      unless tag.is_a?(::String) && %i[type record reify].include?(kind) && fields.is_a?(Vector) && specs.is_a?(Vector)
+        raise CompilerError, "Malformed deftype*, expecting (deftype* tag kind [fields*] [specs*] methods*)"
+      end
+
+      field_bindings = fields.map do |field|
+        meta = field.is_a?(Symbol) ? field.meta : nil
+        mutable = meta && (RClojure.truthy?(meta[:"unsynchronized-mutable"]) || RClojure.truthy?(meta[:"volatile-mutable"]))
+        FieldBinding.new(local_name(field, "deftype*"), mutable)
+      end
+      method_scope = Scope::EMPTY.with_locals(field_bindings)
+      methods = method_forms.map do |form|
+        unless form.is_a?(ISeq) && form.first.is_a?(Symbol) && form.first.ns.nil? && form.rest.first.is_a?(Vector)
+          raise CompilerError, "Invalid deftype* method, expected (name [this params*] body*), got: #{Printer.pr_str(form)}"
+        end
+
+        [form.first.name, analyze_type_method(form.rest.first, form.rest.rest.to_a, method_scope)]
+      end
+      methods.group_by(&:first).each do |name, arities|
+        next if arities.map { |_, method| method.required }.uniq.size == arities.size
+
+        raise CompilerError, "Can't have 2 overloads of #{name} with the same arity"
+      end
+
+      Nodes::Deftype.new(tag, kind, field_bindings, analyze_all(specs, scope), methods)
+    end
+
+    # [this params* (& block)?]: recur goes to the method head without
+    # `this`, as in Clojure, and `& f` names the Ruby block the method was
+    # called with (nil when there's none).
+    def analyze_type_method(param_vector, body, scope)
+      this, *params = param_vector.to_a
+      raise CompilerError, "deftype* methods must take at least one arg, for this" unless this
+
+      block = nil
+      if (amp = params.index(AMPERSAND))
+        if params.size != amp + 2
+          raise CompilerError, "Invalid parameter list, & must be followed by exactly one symbol, for the block"
+        end
+
+        block = LocalBinding.new(local_name(params[amp + 1], "deftype*"))
+        params = params.first(amp)
+      end
+      this_binding = LocalBinding.new(local_name(this, "deftype*"))
+      bindings = params.map { |param| LocalBinding.new(local_name(param, "deftype*")) }
+
+      body_scope = scope.with_locals([this_binding, *bindings, *block]).with_recur(bindings.size)
+      body = Nodes::Let.new([[this_binding, Nodes::This.new]], analyze_body(body, body_scope, true))
+      Nodes::FnMethod.new(bindings, nil, body, block)
     end
 
     # (try body* (catch Class name body*)* (finally body*)?)

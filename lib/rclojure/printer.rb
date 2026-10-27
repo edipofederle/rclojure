@@ -23,6 +23,7 @@ module RClojure
       when nil then ""
       when ::String then value
       when Regexp then value.source
+      when Type then value.to_s
       else write(value, true, &:to_s)
       end
     end
@@ -40,7 +41,8 @@ module RClojure
       when Numeric, Symbol then value.to_s
       when ISeq then "(#{write_all(value, readably)})"
       when Vector then "[#{write_all(value, readably)}]"
-      when Map then "{#{value.map { |k, v| "#{write(k, readably)} #{write(v, readably)}" }.join(', ')}}"
+      when Record then "##{value.class.name}{#{write_entries(value, readably)}}"
+      when Map then "{#{write_entries(value, readably)}}"
       when Set then "\#{#{write_all(value, readably)}}"
       when Var, Namespace then value.to_s
       when Fn, Builtin then "#<fn #{value.name || 'anonymous'}>"
@@ -49,9 +51,14 @@ module RClojure
       when ExceptionInfo then "#<ExceptionInfo #{write(value.message, true)} #{write(value.data, true)}>"
       when Exception then "#<#{value.class} #{write(value.message, true)}>"
       when Regexp then "#\"#{value.source}\""
+      when Type then "#object[#{value.class.name} 0x#{value.object_id.to_s(16)} #{write(value.to_s, true)}]"
       when Class, Module then value.name
       else foreign ? foreign.(value) : value.inspect
       end
+    end
+
+    def write_entries(map, readably)
+      map.map { |k, v| "#{write(k, readably)} #{write(v, readably)}" }.join(", ")
     end
 
     def write_all(values, readably)

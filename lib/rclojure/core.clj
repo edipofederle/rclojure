@@ -892,6 +892,150 @@
 (defn get-method [multifn dispatch-val] (.get-method multifn dispatch-val))
 (defn prefers [multifn] (.prefer-table multifn))
 
+;;; Protocols, types and records
+;;
+;; Protocols are RClojure::Protocol objects, and deftype, defrecord and
+;; reify expand to the deftype* special form, which makes a Ruby class.
+;; As in ClojureScript, deftype and defrecord def a var holding the class.
+
+(defmacro defprotocol [pname & opts+sigs]
+  (let [doc (when (string? (first opts+sigs)) (first opts+sigs))
+        opts+sigs (if doc (next opts+sigs) opts+sigs)
+        [opts sigs] (loop [opts {} s opts+sigs]
+                      (if (keyword? (first s))
+                        (recur (assoc opts (first s) (second s)) (nnext s))
+                        [opts s]))
+        _ (when-let [bad (seq (remove #{:extend-via-metadata} (keys opts)))]
+            (throw (ArgumentError. (apply print-str "Unsupported option(s) -" bad))))
+        sigs (reduce (fn [acc [mname & more]]
+                       (let [arglists (take-while vector? more)
+                             mdoc (first (drop-while vector? more))]
+                         (when (some #(zero? (count %)) arglists)
+                           (throw (ArgumentError. (str "Definition of function " mname " in protocol " pname
+                                                       " must take at least one arg."))))
+                         (when (some #(= mname (:name %)) acc)
+                           (throw (ArgumentError. (str "Function " mname " in protocol " pname
+                                                       " was redefined. Specify all arities in single definition."))))
+                         (conj acc {:name mname :arglists arglists :doc mdoc})))
+                     []
+                     sigs)
+        arities (into {} (map (fn [s] [(keyword (:name s)) (vec (map count (:arglists s)))]) sigs))]
+    `(do
+       (def ~(vary-meta pname assoc :doc doc)
+         (RClojure::Protocol/new ~(str (ns-name *ns*) "/" pname) ~arities ~(boolean (:extend-via-metadata opts))))
+       ~@(map (fn [{mname :name arglists :arglists mdoc :doc}]
+                `(def ~(with-meta mname (merge (meta mname)
+                                               {:arglists (list 'quote arglists) :doc mdoc :protocol (list 'var pname)}))
+                   (.method-fn ~pname ~(keyword mname))))
+              sigs)
+       '~pname)))
+
+(defn extend [atype & proto+mmaps]
+  (doseq [[proto mmap] (partition 2 proto+mmaps)]
+    (RClojure::Protocol/extend-type proto atype mmap)))
+
+(defn satisfies? [protocol x] (.satisfies? protocol x))
+(defn extends? [protocol atype] (.extends? protocol atype))
+(defn extenders [protocol] (.extenders protocol))
+
+;; {spec [method-form ...]}: each spec followed by its methods.
+(defn- parse-impls [specs]
+  (loop [ret {} s specs]
+    (if (seq s)
+      (recur (assoc ret (first s) (take-while seq? (next s)))
+             (drop-while seq? (next s)))
+      ret)))
+
+(defmacro extend-type [t & specs]
+  `(extend ~t
+           ~@(mapcat (fn [[p fs]]
+                       [p (zipmap (map #(keyword (name (first %))) fs)
+                                  (map #(cons `fn (rest %)) fs))])
+                     (parse-impls specs))))
+
+(defmacro extend-protocol [p & specs]
+  `(do ~@(map (fn [[t fs]] `(extend-type ~t ~p ~@fs))
+              (parse-impls specs))))
+
+;; Method params that aren't symbols are destructured in a let.
+(defn- maybe-destructured [params body]
+  (if (every? symbol? params)
+    (cons params body)
+    (loop [params params new-params [] lets []]
+      (if params
+        (if (symbol? (first params))
+          (recur (next params) (conj new-params (first params)) lets)
+          (let [gparam (gensym "p__")]
+            (recur (next params) (conj new-params gparam) (conj lets (first params) gparam))))
+        `(~new-params (let ~lets ~@body))))))
+
+;; [spec-forms method-forms]. As in Clojure, a method is matched to a
+;; protocol by name, not by the spec it's listed under.
+(defn- parse-type-specs [specs]
+  (let [impls (parse-impls specs)]
+    [(vec (keys impls))
+     (map (fn [[mname params & body]] (cons mname (maybe-destructured params body)))
+          (apply concat (vals impls)))]))
+
+(defn- type-tag [tname]
+  (str (.tr (str (ns-name *ns*)) "-" "_") "." tname))
+
+(defn- validate-fields [fields tname]
+  (when-not (vector? fields)
+    (throw (ArgumentError. "No fields vector given.")))
+  (when-let [non-syms (seq (remove symbol? fields))]
+    (throw (ArgumentError. (str "defrecord and deftype fields must be symbols, " (type-tag tname)
+                                " had: " (apply str (interpose ", " non-syms)))))))
+
+(defn- positional-factory [tname fields]
+  (let [fields (vec (map #(with-meta % nil) fields))]
+    `(defn ~(symbol (str "->" tname))
+       ~(str "Positional factory function for class " (type-tag tname) ".")
+       ~fields
+       (new ~tname ~@fields))))
+
+(defmacro deftype [tname fields & specs]
+  (validate-fields fields tname)
+  (let [[interfaces methods] (parse-type-specs specs)]
+    `(do
+       (def ~tname (deftype* ~(type-tag tname) :type ~fields ~interfaces ~@methods))
+       ~(positional-factory tname fields)
+       ~tname)))
+
+(defmacro defrecord [tname fields & specs]
+  (validate-fields fields tname)
+  (when (some #(or (:unsynchronized-mutable (meta %)) (:volatile-mutable (meta %))) fields)
+    (throw (ArgumentError. ":volatile-mutable or :unsynchronized-mutable not supported for record fields")))
+  (let [[interfaces methods] (parse-type-specs specs)]
+    `(do
+       (def ~tname (deftype* ~(type-tag tname) :record ~fields ~interfaces ~@methods))
+       ~(positional-factory tname fields)
+       (defn ~(symbol (str "map->" tname))
+         ~(str "Factory function for class " (type-tag tname) ", taking a map of keywords to field values.")
+         [m#]
+         (.create ~tname (if (map? m#) m# (into {} m#))))
+       ~tname)))
+
+(defn record? [x] (instance? RClojure::Record x))
+
+(defn- symbols-in [form]
+  (cond
+    (symbol? form) [form]
+    (coll? form) (mapcat symbols-in (if (map? form) (apply concat form) form))
+    :else nil))
+
+;; Like Clojure's, a reify class is made once, when the form is compiled:
+;; the locals its methods use become its fields, given to each new object.
+(defmacro reify [& specs]
+  (let [[interfaces methods] (parse-type-specs specs)
+        closed (vec (distinct (filter #(and (nil? (namespace %)) (contains? &env %))
+                                      (symbols-in methods))))
+        cls (eval `(deftype* ~(type-tag (gensym "reify__")) :reify ~closed ~interfaces ~@methods))
+        obj `(new ~cls ~@closed)]
+    (if (seq (meta &form))
+      `(with-meta ~obj ~(meta &form))
+      obj)))
+
 ;;; Vars
 
 (defn with-redefs-fn [binding-map func]

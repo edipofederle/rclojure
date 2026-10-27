@@ -108,10 +108,11 @@ module RClojure
       @hash || each_with_object({}) { |(key, value), hash| hash[key] = value }
     end
 
+    # A record (a subclass) only equals records of the same type.
     def ==(other)
       return true if equal?(other)
 
-      other.is_a?(Map) && other.size == size &&
+      other.class.equal?(self.class) && other.size == size &&
         all? { |key, value| other.key?(key) && RClojure.equiv?(value, other[key]) }
     end
     alias eql? ==

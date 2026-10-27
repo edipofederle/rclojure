@@ -49,6 +49,7 @@ module RClojure
       when Nodes::TheVar then constant(node.var)
       when Nodes::Def then compile_def(node)
       when Nodes::VarAssign then "#{constant(node.var)}.set(#{expr(node.value)})"
+      when Nodes::LocalAssign then "(#{name(node.binding)} = #{expr(node.value)})"
       when Nodes::WithMeta then "(#{expr(node.expr)}).with_meta(#{expr(node.meta)})"
       when Nodes::If then "(#{expr(node.test)} ? (#{expr(node.then_branch)}) : (#{expr(node.else_branch)}))"
       when Nodes::Do then "(#{(node.statements.map { |s| expr(s) } << expr(node.ret)).join("\n")})"
@@ -56,6 +57,8 @@ module RClojure
       when Nodes::LetFn then "(#{bind_fns(node.bindings)}\n#{expr(node.body)})"
       when Nodes::Loop then compile_loop(node)
       when Nodes::FnNode then compile_fn(node)
+      when Nodes::Deftype then compile_deftype(node)
+      when Nodes::This then "self"
       when Nodes::Invoke then compile_invoke(node)
       when Nodes::HostCall then compile_host_call(node)
       when Nodes::HostAssign then compile_host_assign(node)
@@ -159,9 +162,26 @@ module RClojure
         @loop_locals = nil
         body = expr(method.body)
       end
-      "->(#{params.map { |param| name(param) }.join(', ')}) {\n#{body}\n}"
+      names = params.map { |param| name(param) }
+      names << "&#{name(method.block)}" if method.block
+      "->(#{names.join(', ')}) {\n#{body}\n}"
     ensure
       @recur_target = outer_target
+    end
+
+    # A class from RClojure::Deftype.define. Each method arity is a lambda,
+    # which becomes a Ruby method of the class, so `self` (This) is the
+    # object and fields are its instance variables.
+    def compile_deftype(node)
+      outer_locals = @loop_locals
+      fields = node.fields.map { |field| [field.name, field.mutable] }
+      methods = node.methods.group_by(&:first).map do |method_name, arities|
+        "#{method_name.inspect} => [#{arities.map { |_, method| compile_method(method) }.join(",\n")}]"
+      end
+      "RClojure::Deftype.define(#{node.tag.inspect}, #{node.kind.inspect}, #{fields.inspect}, " \
+        "[#{list(node.specs)}], {#{methods.join(",\n")}})"
+    ensure
+      @loop_locals = outer_locals
     end
 
     # In Clojure's order: mark dynamic, replace the metadata, bind the root.
@@ -227,13 +247,15 @@ module RClojure
 
     # A Ruby local name per binding, unique within the compiled form.
     def name(binding)
+      return binding.ivar.to_s if binding.is_a?(FieldBinding)
+
       @names[binding] ||= "l_#{binding.name.gsub(/[^a-zA-Z0-9_]/) { |c| c == '-' ? '_' : "_#{c.ord}_" }}__#{@counter += 1}"
     end
 
     # Whether a recur in body targets body's fn method (recurs inside a
     # nested loop* or fn* target those instead).
     def contains_recur?(body)
-      each_node(body, prune: [Nodes::Loop, Nodes::FnNode]).any? { |node| node.is_a?(Nodes::RecurNode) }
+      each_node(body, prune: [Nodes::Loop, Nodes::FnNode, Nodes::Deftype]).any? { |node| node.is_a?(Nodes::RecurNode) }
     end
 
     def loop_locals_used(fn_node, loop_locals)
