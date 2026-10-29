@@ -2,6 +2,10 @@
 
 A Clojure dialect hosted on Ruby.
 
+> **Note:** this repository is a personal experiment and exploration, with
+> no intention of becoming a real project (at least not soon). And yes, it
+> is built with heavy use of LLMs.
+
 ## Status
 
 - [x] Milestone 0 — gem skeleton, REPL, test suite
