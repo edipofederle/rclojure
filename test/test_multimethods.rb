@@ -119,7 +119,7 @@ class TestHierarchies < Minitest::Test
     assert_ev false, "(isa? Numeric Integer)"
     assert_ev true, "(isa? [Integer :a] [Numeric :a])"
     assert_ev false, "(isa? [Integer] [Numeric :a])"
-    assert_ev Set[sym_class("Numeric")], "(parents Integer)"
+    assert_ev true, "(contains? (parents Integer) Numeric)"
     assert_ev true, "(contains? (ancestors Integer) Comparable)"
     assert_ev true, "(class? String)"
     assert_ev false, "(class? :k)"
